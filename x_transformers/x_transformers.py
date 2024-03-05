@@ -779,9 +779,7 @@ class AttentionLayers(nn.Module):
         dim_head = attn_kwargs.get('dim_head', DEFAULT_DIM_HEAD)
         if dim_head_custom != -1:
             dim_head = dim_head_custom
-        print("xtra")
-        print(dim_head_custom)
-        print(dim_head)
+
         self.dim = dim
         self.depth = depth
         self.layers = nn.ModuleList([])
