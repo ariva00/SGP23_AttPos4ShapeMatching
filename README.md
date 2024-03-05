@@ -17,7 +17,7 @@ to test the trained model on FAUST1K, simply run:
 python faust1k_ropeattn.py
 ```
 
-to train a model, download the dataset folder [link](https://www.dropbox.com/sh/wpm783ncirfurzp/AAACQTUWgy7tO7gpAlJM6CD_a?dl=0), and then run:
+to train a model, download the dataset folder from [here](https://www.dropbox.com/sh/wpm783ncirfurzp/AAACQTUWgy7tO7gpAlJM6CD_a?dl=0), and then run:
 ```bash
 python train_ropeattn.py
 ```
