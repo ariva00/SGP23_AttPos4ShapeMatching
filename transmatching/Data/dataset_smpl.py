@@ -3,8 +3,8 @@ import os
 import torch
 import trimesh
 from torch.utils.data import Dataset
-
-from transmatching.Utils.utils import RandomRotateCustom, est_area
+import random
+from transmatching.Utils.utils import RandomRotateCustom, est_area, RandomRotateCustomAllAxis
 
 
 class SMPLDataset(Dataset):
@@ -28,7 +28,15 @@ class SMPLDataset(Dataset):
 
         if self.train:
             shape = self.train_data[index]
-            shape = RandomRotateCustom(shape, 180, 1)
+            valuer = random.randint(0, 4)
+            if valuer == 0:
+                shape = RandomRotateCustomAllAxis(shape, 360)
+            elif valuer == 1:
+                shape = RandomRotateCustom(shape, 360, 0)
+            elif valuer == 2:
+                shape = RandomRotateCustom(shape, 360, 1)
+            elif valuer == 3:
+                shape = RandomRotateCustom(shape, 360, 2)
         else:
             shape = self.test_data[index]
         ref = self.reference
