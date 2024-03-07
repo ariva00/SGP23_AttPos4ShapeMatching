@@ -49,8 +49,9 @@ def main(args):
     linear2 = nn.Sequential(nn.Linear(512, 256), nn.Tanh(), nn.Linear(256, 128), nn.Tanh(), nn.Linear(128, 64),
                             nn.Tanh(), nn.Linear(64, 32), nn.Tanh(), nn.Linear(32, 16), nn.Tanh(),
                             nn.Linear(16, 3)).cuda()
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    
+    params = list(linear1.parameters()) + list(model.parameters()) + list(linear2.parameters())
+    optimizer = torch.optim.Adam(params, lr=args.lr)
 
 # ------------------------------------------------------------------------------------------------------------------
 # END SETUP  -------------------------------------------------------------------------------------------------------
