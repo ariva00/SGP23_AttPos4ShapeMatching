@@ -516,6 +516,7 @@ class Attention(nn.Module):
         scale_init_value = None,
         one_kv_head = False,
         value_dim_head = None,
+        gaussian_heads = False,
     ):
         super().__init__()
         self.scale = dim_head ** -0.5
@@ -524,9 +525,12 @@ class Attention(nn.Module):
         self.causal = causal
         self.max_attend_past = max_attend_past
 
+        self.gaussian_heads = gaussian_heads
+        heads = heads - gaussian_heads if gaussian_heads else heads
+
         value_dim_head = default(value_dim_head, dim_head)
         q_dim = k_dim = dim_head * heads
-        v_dim = out_dim = value_dim_head * heads
+        v_dim = out_dim = value_dim_head * self.heads
 
         self.one_kv_head = one_kv_head
         if one_kv_head:
@@ -596,13 +600,16 @@ class Attention(nn.Module):
         rotary_pos_emb = None,
         prev_attn = None,
         mem = None,
+        gaussian_attn = None,
     ):
-        b, n, _, h, talking_heads, head_scale, scale, device, has_context = *x.shape, self.heads, self.talking_heads, self.head_scale, self.scale, x.device, exists(context)
+        b, n, _, h, talking_heads, gaussian_heads, head_scale, scale, device, has_context = *x.shape, self.heads, self.talking_heads, self.gaussian_heads, self.head_scale, self.scale, x.device, exists(context)
         kv_input = default(context, x)
 
         q_input = x
         k_input = kv_input
         v_input = kv_input
+
+        h = h - gaussian_heads if gaussian_heads else h
 
         if exists(mem):
             k_input = torch.cat((mem, k_input), dim = -2)
@@ -622,7 +629,8 @@ class Attention(nn.Module):
         q = rearrange(q, 'b n (h d) -> b h n d', h = h)
 
         if not self.one_kv_head:
-            k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (k, v))
+            k = rearrange(k, 'b n (h d) -> b h n d', h = h)
+            v = rearrange(v, 'b n (h d) -> b h n d', h = self.heads)
 
         if exists(rotary_pos_emb) and not has_context:
             l = rotary_pos_emb.shape[-1]
@@ -655,6 +663,11 @@ class Attention(nn.Module):
 
         dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
         mask_value = max_neg_value(dots)
+
+        if gaussian_heads:
+            # This could go at line 719 if we don't need the previous attention of the gaussian heads
+            dots = torch.cat((dots, gaussian_attn), dim=1)
+            pass
 
         if exists(prev_attn):
             dots = dots + prev_attn
@@ -917,7 +930,8 @@ class AttentionLayers(nn.Module):
         context_mask = None,
         attn_mask = None,
         mems = None,
-        return_hiddens = False
+        return_hiddens = False,
+        gaussian_attn = None
     ):
         assert not (self.cross_attend ^ exists(context)), 'context must be passed in if cross_attend is set to True'
 
@@ -951,11 +965,11 @@ class AttentionLayers(nn.Module):
             if layer_type == 'a':
                 out, inter = block(x, mask = mask, attn_mask = attn_mask, sinusoidal_emb = self.pia_pos_emb,
                                        rel_pos = self.rel_pos, rotary_pos_emb = rotary_pos_emb, prev_attn = prev_attn,
-                                       mem = layer_mem)
+                                       mem = layer_mem, gaussian_attn = gaussian_attn)
 
 
             elif layer_type == 'c':
-                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn)
+                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn, gaussian_attn = gaussian_attn)
             elif layer_type == 'f':
                 out = block(x)
 
