@@ -6,7 +6,7 @@ import numpy as np
 from scipy.io import loadmat
 from x_transformers import Encoder
 import torch.nn as nn
-
+import os
 import random
 import numpy
 
@@ -46,8 +46,8 @@ def main(args):
                             nn.Linear(16, 3)).cuda()
 
 
-    modelname = "trained_model.pt"
-    pathfolder= "./model"
+    modelname = args.run_name
+    pathfolder= "./models"
     model.load_state_dict(torch.load(pathfolder+"/"+modelname, map_location=lambda storage, loc: storage)) # ))#
     linear1.load_state_dict(torch.load(pathfolder+"/l1."+modelname, map_location=lambda storage, loc: storage)) # ))#
     linear2.load_state_dict(torch.load(pathfolder+"/l2."+modelname, map_location=lambda storage, loc: storage)) # ))#
@@ -113,6 +113,8 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--path_data", default="./dataset/FAUSTS_rem.mat")
+
+    parser.add_argument("--run_name", default="custom_trained_model")
 
     args = parser.parse_args()
 
