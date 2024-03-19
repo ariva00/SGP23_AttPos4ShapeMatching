@@ -2,9 +2,15 @@ import torch
 import trimesh
 import numpy as np
 
-def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma:float):
+def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma:float) -> torch.Tensor:
     dist = torch.cdist(x, y, p=1)
     return ((-(dist**2)/(2*(sigma**2))).exp())
+
+def gauss_attn(x:torch.Tensor, sigmas) -> torch.Tensor:
+    y = torch.empty((x.shape[0], 0, x.shape[1], x.shape[1]), requires_grad=False).to(x.device)
+    for i, sigma in enumerate(sigmas):
+        y = torch.cat((y, point_gauss(x, x, sigma).unsqueeze(1)), dim=1)
+    return y
 
 if __name__ == "__main__":
     import os
@@ -33,7 +39,7 @@ if __name__ == "__main__":
     print(points.shape)
     print(p.shape)
 
-    y = point_gauss(points, points, 0.2)
+    y = point_gauss(points, points, 0.1)
 
     print(y.shape)
 

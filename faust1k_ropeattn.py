@@ -9,6 +9,7 @@ import torch.nn as nn
 import os
 import random
 import numpy
+from point_gaussian import gauss_attn
 
 def set_seed(seed):
     random.seed(seed)
@@ -35,7 +36,8 @@ def main(args):
         pre_norm=False,
         residual_attn=True,
         rotary_pos_emb=True,
-        rotary_emb_dim=64
+        rotary_emb_dim=64,
+        attn_gaussian_heads=args.gaussian_heads
     ).cuda()
 
     linear1 = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 32), nn.Tanh(), nn.Linear(32, 64), nn.Tanh(),
@@ -65,7 +67,7 @@ def main(args):
 
     with torch.no_grad():
         err = []
-        for _ in tqdm(range(n_pairs), disable=True):
+        for _ in tqdm(range(n_pairs)):
 
             shape_A_idx = np.random.randint(n)
             shape_B_idx = np.random.randint(n)
@@ -85,7 +87,18 @@ def main(args):
             third_tensor_l = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
             third_tensor2 = linear1(third_tensor_l)
 
-            y_hat_1_m = model(third_tensor2)
+            dim1 = points_A.unsqueeze(0).shape[1]
+            dim2 = points_B.unsqueeze(0).shape[1] + 1
+
+            if args.gaussian_heads:
+                shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0), [0.05, 0.1, 0.5, 1])
+                shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0), [0.05, 0.1, 0.5, 1])
+                fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).cuda()
+                fixed_attn[:, :, :dim1, :dim1] = shape1_gaussian_attn
+                fixed_attn[:, :, dim2:, dim2:] = shape2_gaussian_attn
+                y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn)
+            else:
+                y_hat_1_m = model(third_tensor2)
 
             y_hat1 = linear2(y_hat_1_m)
             y_hat_2 = y_hat1[:, :1000, :]
@@ -116,7 +129,12 @@ if __name__ == "__main__":
 
     parser.add_argument("--run_name", default="custom_trained_model")
 
+    parser.add_argument("--gaussian_heads", type=int, default=0)
+
     args = parser.parse_args()
+
+    if args.gaussian_heads == 0:
+        args.gaussian_heads = False
 
     main(args)
 
