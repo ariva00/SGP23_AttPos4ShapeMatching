@@ -91,8 +91,8 @@ def main(args):
             dim2 = points_B.unsqueeze(0).shape[1] + 1
 
             if args.gaussian_heads:
-                shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0), [0.05, 0.1, 0.5, 1])
-                shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0), [0.05, 0.1, 0.5, 1])
+                shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0), args.sigma)
+                shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0), args.sigma)
                 fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).cuda()
                 fixed_attn[:, :, :dim1, :dim1] = shape1_gaussian_attn
                 fixed_attn[:, :, dim2:, dim2:] = shape2_gaussian_attn
@@ -130,11 +130,16 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", default="custom_trained_model")
 
     parser.add_argument("--gaussian_heads", type=int, default=0)
+    parser.add_argument("--sigma", type=float, default=[0.05], nargs="*")
 
     args = parser.parse_args()
 
     if args.gaussian_heads == 0:
         args.gaussian_heads = False
+    elif len(args.sigma) != args.gaussian_heads:
+        while len(args.sigma) < args.gaussian_heads:
+            args.sigma.append(args.sigma[-1] * 2)
+        args.sigma = args.sigma[:args.gaussian_heads]
 
     main(args)
 
