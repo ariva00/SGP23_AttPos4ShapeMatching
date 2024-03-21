@@ -115,9 +115,13 @@ def main(args):
             y_hat = y_hat_l2[:, dim2:, :]
             y_hat_b = y_hat_l2[:, :dim1, :]
 
-            loss = ((y_hat[:, gt2, :] - shape1[:, gt1, :]) ** 2).sum() + \
-                   ((y_hat_b[:, gt1, :] - shape2[:, gt2, :]) ** 2).sum()+ \
-                   lossmse(y_hat_l2[:, dim1, :],sep[:, 0, :])
+            if args.no_sep_loss:
+                loss = ((y_hat[:, gt2, :] - shape1[:, gt1, :]) ** 2).sum() + \
+                       ((y_hat_b[:, gt1, :] - shape2[:, gt2, :]) ** 2).sum()
+            else:
+                loss = ((y_hat[:, gt2, :] - shape1[:, gt1, :]) ** 2).sum() + \
+                       ((y_hat_b[:, gt1, :] - shape2[:, gt2, :]) ** 2).sum() + \
+                       lossmse(y_hat_l2[:, dim1, :],sep[:, 0, :])
 
             loss.backward()
             optimizer.step()
@@ -157,6 +161,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--gaussian_heads", type=int, default=0)
     parser.add_argument("--sigma", type=float, default=[0.05], nargs="*")
+    parser.add_argument("--no_sep_loss", default=False, action="store_true")
 
     args = parser.parse_args()
 
