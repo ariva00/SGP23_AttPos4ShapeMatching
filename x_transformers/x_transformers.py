@@ -667,7 +667,6 @@ class Attention(nn.Module):
         if gaussian_heads:
             # This could go at line 719 if we don't need the previous attention of the gaussian heads
             dots = torch.cat((dots, gaussian_attn), dim=1)
-            pass
 
         if exists(prev_attn):
             dots = dots + prev_attn

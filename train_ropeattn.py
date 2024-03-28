@@ -9,7 +9,10 @@ from x_transformers import Encoder
 import torch.nn as nn
 import random
 import numpy
-from point_gaussian import gauss_attn
+from point_gaussian import GaussianAttention
+import logging
+
+logging.basicConfig(filename='train.log', encoding='utf-8', level=logging.DEBUG)
 
 def set_seed(seed):
     random.seed(seed)
@@ -18,6 +21,9 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 def main(args):
+
+    logger = logging.getLogger(args.run_name)
+    logger.info(f"training {args.run_name}")
 
 # ------------------------------------------------------------------------------------------------------------------
 # BEGIN SETUP  -----------------------------------------------------------------------------------------------------
@@ -45,6 +51,8 @@ def main(args):
         attn_gaussian_heads=args.gaussian_heads
     ).cuda()
 
+    gauss_attn = GaussianAttention(args.sigma)
+
     linear1 = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 32), nn.Tanh(), nn.Linear(32, 64), nn.Tanh(),
                             nn.Linear(64, 128), nn.Tanh(), nn.Linear(128, 256), nn.Tanh(), nn.Linear(256, 512)).cuda()
 
@@ -52,14 +60,20 @@ def main(args):
                             nn.Tanh(), nn.Linear(64, 32), nn.Tanh(), nn.Linear(32, 16), nn.Tanh(),
                             nn.Linear(16, 3)).cuda()
     
-    params = list(linear1.parameters()) + list(model.parameters()) + list(linear2.parameters())
+    if args.learn_sigma:
+        params = list(linear1.parameters()) + list(model.parameters()) + list(linear2.parameters()) + list(gauss_attn.parameters())
+    else:
+        for p in gauss_attn.parameters():
+            p.requires_grad = False
+        params = list(linear1.parameters()) + list(model.parameters()) + list(linear2.parameters())
     optimizer = torch.optim.Adam(params, lr=args.lr)
 
     if args.resume:
-        model.load_state_dict(torch.load("models/" + args.run_name))
-        linear1.load_state_dict(torch.load("models/l1." + args.run_name))
-        linear2.load_state_dict(torch.load("models/l2." + args.run_name))
-        optimizer.load_state_dict(torch.load("models/optim." + args.run_name))
+        model.load_state_dict(torch.load(os.path.join("models", args.run_name + ".pt")))
+        linear1.load_state_dict(torch.load(os.path.join("models", "l1." + args.run_name + ".pt")))
+        linear2.load_state_dict(torch.load(os.path.join("models", "l2." + args.run_name + ".pt")))
+        optimizer.load_state_dict(torch.load(os.path.join("models", "optim." + args.run_name + ".pt")))
+        gauss_attn.load_state_dict(torch.load(os.path.join("models", "gauss_attn." + args.run_name + ".pt")))
 
 # ------------------------------------------------------------------------------------------------------------------
 # END SETUP  -------------------------------------------------------------------------------------------------------
@@ -73,9 +87,11 @@ def main(args):
     model = model.train()
     linear1 = linear1.train()
     linear2 = linear2.train()
+    gauss_attn = gauss_attn.train()
     lossmse = nn.MSELoss()
-    start = time.time()
     for epoch in range(args.n_epoch):
+        logger.info(f"starting epoch {epoch}/{args.n_epoch-1}")
+        start = time.time()
         ep_loss = 0
         for item in tqdm(dataloader_train):
             optimizer.zero_grad(set_to_none=True)
@@ -103,8 +119,8 @@ def main(args):
 
             third_tensor = linear1(inputz)
             if args.gaussian_heads:
-                shape1_gaussian_attn = gauss_attn(shape1, args.sigma)
-                shape2_gaussian_attn = gauss_attn(shape2, args.sigma)
+                shape1_gaussian_attn = gauss_attn(shape1)
+                shape2_gaussian_attn = gauss_attn(shape2)
                 fixed_attn = torch.zeros((third_tensor.shape[0], args.gaussian_heads, third_tensor.shape[1], third_tensor.shape[1])).cuda()
                 fixed_attn[:, :, :dim1, :dim1] = shape1_gaussian_attn
                 fixed_attn[:, :, dim2:, dim2:] = shape2_gaussian_attn
@@ -129,14 +145,17 @@ def main(args):
             ep_loss += loss.item()
 
         print(f"EPOCH: {epoch} HAS FINISHED, in {time.time() - start} SECONDS! ---------------------------------------")
-        start = time.time()
         print(f"LOSS: {ep_loss} --------------------------------------------------------------------------------------")
         os.makedirs("models", exist_ok=True)
 
-        torch.save(model.state_dict(), "models/" + args.run_name)
-        torch.save(linear1.state_dict(), "models/l1." + args.run_name)
-        torch.save(linear2.state_dict(), "models/l2." + args.run_name)
-        torch.save(optimizer.state_dict(), "models/optim." + args.run_name)
+        torch.save(model.state_dict(), os.path.join("models", args.run_name + ".pt"))
+        torch.save(linear1.state_dict(), os.path.join("models", "l1." + args.run_name + ".pt"))
+        torch.save(linear2.state_dict(), os.path.join("models", "l2." + args.run_name + ".pt"))
+        torch.save(optimizer.state_dict(), os.path.join("models", "optim." + args.run_name + ".pt"))
+        torch.save(gauss_attn.state_dict(), os.path.join("models", "gauss_attn." + args.run_name + ".pt"))
+
+        logger.info(f"ending epoch {epoch}/{args.n_epoch-1}, time {time.time() - start} seconds, loss {ep_loss}")
+    logger.info(f"training {args.run_name} has finished")
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -162,6 +181,7 @@ if __name__ == "__main__":
     parser.add_argument("--gaussian_heads", type=int, default=0)
     parser.add_argument("--sigma", type=float, default=[0.05], nargs="*")
     parser.add_argument("--no_sep_loss", default=False, action="store_true")
+    parser.add_argument("--learn_sigma", default=False, action="store_true")
 
     args = parser.parse_args()
 

@@ -9,7 +9,7 @@ import torch.nn as nn
 import os
 import random
 import numpy
-from point_gaussian import gauss_attn
+from point_gaussian import GaussianAttention
 
 def set_seed(seed):
     random.seed(seed)
@@ -40,6 +40,8 @@ def main(args):
         attn_gaussian_heads=args.gaussian_heads
     ).cuda()
 
+    gauss_attn = GaussianAttention(args.sigma)
+
     linear1 = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 32), nn.Tanh(), nn.Linear(32, 64), nn.Tanh(),
                             nn.Linear(64, 128), nn.Tanh(), nn.Linear(128, 256), nn.Tanh(), nn.Linear(256, 512)).cuda()
 
@@ -48,11 +50,12 @@ def main(args):
                             nn.Linear(16, 3)).cuda()
 
 
-    modelname = args.run_name
+    modelname = args.run_name + ".pt"
     pathfolder= "./models"
-    model.load_state_dict(torch.load(pathfolder+"/"+modelname, map_location=lambda storage, loc: storage)) # ))#
-    linear1.load_state_dict(torch.load(pathfolder+"/l1."+modelname, map_location=lambda storage, loc: storage)) # ))#
-    linear2.load_state_dict(torch.load(pathfolder+"/l2."+modelname, map_location=lambda storage, loc: storage)) # ))#
+    model.load_state_dict(torch.load(os.path.join(pathfolder, modelname), map_location=lambda storage, loc: storage))
+    linear1.load_state_dict(torch.load(os.path.join(pathfolder, "l1." + modelname), map_location=lambda storage, loc: storage))
+    linear2.load_state_dict(torch.load(os.path.join(pathfolder, "l2." + modelname), map_location=lambda storage, loc: storage))
+    gauss_attn.load_state_dict(torch.load(os.path.join(pathfolder, "gauss_attn." + modelname), map_location=lambda storage, loc: storage))
 
     print(modelname)
     print(model)
@@ -64,6 +67,7 @@ def main(args):
     model.eval()
     linear1.eval()
     linear2.eval()
+    gauss_attn.eval()
 
     with torch.no_grad():
         err = []
@@ -91,8 +95,8 @@ def main(args):
             dim2 = points_B.unsqueeze(0).shape[1] + 1
 
             if args.gaussian_heads:
-                shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0), args.sigma)
-                shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0), args.sigma)
+                shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0))
+                shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0))
                 fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).cuda()
                 fixed_attn[:, :, :dim1, :dim1] = shape1_gaussian_attn
                 fixed_attn[:, :, dim2:, dim2:] = shape2_gaussian_attn

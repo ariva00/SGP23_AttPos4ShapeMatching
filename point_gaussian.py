@@ -2,15 +2,23 @@ import torch
 import trimesh
 import numpy as np
 
-def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma:float) -> torch.Tensor:
+def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma) -> torch.Tensor:
     dist = torch.cdist(x, y, p=1)
     return ((-(dist**2)/(2*(sigma**2))).exp())
 
 def gauss_attn(x:torch.Tensor, sigmas) -> torch.Tensor:
-    y = torch.empty((x.shape[0], 0, x.shape[1], x.shape[1]), requires_grad=False).to(x.device)
+    y = torch.empty((x.shape[0], 0, x.shape[1], x.shape[1])).to(x.device)
     for i, sigma in enumerate(sigmas):
         y = torch.cat((y, point_gauss(x, x, sigma).unsqueeze(1)), dim=1)
     return y
+
+class GaussianAttention(torch.nn.Module):
+    def __init__(self, sigmas):
+        super(GaussianAttention, self).__init__()
+        self.sigmas = torch.nn.Parameter(torch.tensor(sigmas))
+
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
+        return gauss_attn(x, self.sigmas)
 
 if __name__ == "__main__":
     import os
