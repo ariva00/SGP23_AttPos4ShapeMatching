@@ -48,18 +48,19 @@ def main(args):
         residual_attn=True,
         rotary_pos_emb=True,
         rotary_emb_dim=64,
-        attn_gaussian_heads=args.gaussian_heads
-    ).cuda()
+        attn_gaussian_heads=args.gaussian_heads,
+        attn_force_gaussian_cross_attn=args.force_cross_attn,
+    ).to(args.device)
 
-    gauss_attn = GaussianAttention(args.sigma)
+    gauss_attn = GaussianAttention(args.sigma).to(args.device)
 
     linear1 = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 32), nn.Tanh(), nn.Linear(32, 64), nn.Tanh(),
-                            nn.Linear(64, 128), nn.Tanh(), nn.Linear(128, 256), nn.Tanh(), nn.Linear(256, 512)).cuda()
+                            nn.Linear(64, 128), nn.Tanh(), nn.Linear(128, 256), nn.Tanh(), nn.Linear(256, 512)).to(args.device)
 
     linear2 = nn.Sequential(nn.Linear(512, 256), nn.Tanh(), nn.Linear(256, 128), nn.Tanh(), nn.Linear(128, 64),
                             nn.Tanh(), nn.Linear(64, 32), nn.Tanh(), nn.Linear(32, 16), nn.Tanh(),
-                            nn.Linear(16, 3)).cuda()
-    
+                            nn.Linear(16, 3)).to(args.device)
+
     if args.learn_sigma:
         params = list(linear1.parameters()) + list(model.parameters()) + list(linear2.parameters()) + list(gauss_attn.parameters())
     else:
@@ -96,7 +97,7 @@ def main(args):
         for item in tqdm(dataloader_train):
             optimizer.zero_grad(set_to_none=True)
 
-            shapes = item["x"].cuda()
+            shapes = item["x"].to(args.device)
             shape1 = shapes[:args.batch_size // 2, :, :]
             shape2 = shapes[args.batch_size // 2:, :, :]
 
@@ -112,7 +113,7 @@ def main(args):
             gt2 = torch.zeros_like(permidx2)
             gt2[permidx2] = torch.arange(dim2)
 
-            sep = -torch.ones(shape1.shape[0], 1, 3).cuda()
+            sep = -torch.ones(shape1.shape[0], 1, 3).to(args.device)
 
             dim2 = dim1 +1
             inputz = torch.cat((shape1, sep, shape2), 1)
@@ -121,10 +122,13 @@ def main(args):
             if args.gaussian_heads:
                 shape1_gaussian_attn = gauss_attn(shape1)
                 shape2_gaussian_attn = gauss_attn(shape2)
-                fixed_attn = torch.zeros((third_tensor.shape[0], args.gaussian_heads, third_tensor.shape[1], third_tensor.shape[1])).cuda()
+                fixed_attn = torch.zeros((third_tensor.shape[0], args.gaussian_heads, third_tensor.shape[1], third_tensor.shape[1])).to(args.device)
                 fixed_attn[:, :, :dim1, :dim1] = shape1_gaussian_attn
                 fixed_attn[:, :, dim2:, dim2:] = shape2_gaussian_attn
-                y_hat_l = model(third_tensor, gaussian_attn=fixed_attn)
+                if args.force_cross_attn:
+                    y_hat_l = model(third_tensor, gaussian_attn=fixed_attn, shape_sep_idx = dim1)
+                else:
+                    y_hat_l = model(third_tensor, gaussian_attn=fixed_attn)
             else:
                 y_hat_l = model(third_tensor)
             y_hat_l2 = linear2(y_hat_l)
@@ -179,18 +183,38 @@ if __name__ == "__main__":
     parser.add_argument("--resume", default=False, action="store_true")
 
     parser.add_argument("--gaussian_heads", type=int, default=0)
-    parser.add_argument("--sigma", type=float, default=[0.05], nargs="*")
+    parser.add_argument("--sigma", type=float, default=[], nargs="*")
     parser.add_argument("--no_sep_loss", default=False, action="store_true")
     parser.add_argument("--learn_sigma", default=False, action="store_true")
 
-    args = parser.parse_args()
+    parser.add_argument("--force_cross_attn", type=int, default=0)
+
+    parser.add_argument("--device", default="auto")
+
+    args, _ = parser.parse_known_args()
 
     if args.gaussian_heads == 0:
         args.gaussian_heads = False
     elif len(args.sigma) != args.gaussian_heads:
         while len(args.sigma) < args.gaussian_heads:
-            args.sigma.append(args.sigma[-1] * 2)
+            if args.learn_sigma:
+                args.sigma.append(torch.rand(1).item())
+            elif len(args.sigma) > 0:
+                args.sigma.append(args.sigma[-1] * 2)
+            else:
+                args.sigma.append(0.05)
         args.sigma = args.sigma[:args.gaussian_heads]
+    if args.force_cross_attn == 0:
+        args.force_cross_attn = False
+
+    if args.device == "auto":
+        args.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if torch.backends.mps.is_available()
+            else "cpu"
+        )
 
     main(args)
 

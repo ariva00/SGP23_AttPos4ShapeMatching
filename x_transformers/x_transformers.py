@@ -517,6 +517,7 @@ class Attention(nn.Module):
         one_kv_head = False,
         value_dim_head = None,
         gaussian_heads = False,
+        force_gaussian_cross_attn = False,
     ):
         super().__init__()
         self.scale = dim_head ** -0.5
@@ -527,6 +528,8 @@ class Attention(nn.Module):
 
         self.gaussian_heads = gaussian_heads
         heads = heads - gaussian_heads if gaussian_heads else heads
+
+        self.force_gaussian_cross_attn = force_gaussian_cross_attn
 
         value_dim_head = default(value_dim_head, dim_head)
         q_dim = k_dim = dim_head * heads
@@ -601,6 +604,7 @@ class Attention(nn.Module):
         prev_attn = None,
         mem = None,
         gaussian_attn = None,
+        shape_sep_idx = None
     ):
         b, n, _, h, talking_heads, gaussian_heads, head_scale, scale, device, has_context = *x.shape, self.heads, self.talking_heads, self.gaussian_heads, self.head_scale, self.scale, x.device, exists(context)
         kv_input = default(context, x)
@@ -661,10 +665,19 @@ class Attention(nn.Module):
 
         kv_einsum_eq = 'b h j d' if not self.one_kv_head else 'b j d'
 
-        dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
+        if self.force_gaussian_cross_attn:
+            dots = torch.zeros(q.shape[0], q.shape[1], q.shape[2], k.shape[2], device = device)
+            dots[:, self.force_gaussian_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_gaussian_cross_attn:, :, :], k[:, self.force_gaussian_cross_attn:, :, :]) * scale
+            dots[:, :self.force_gaussian_cross_attn, :shape_sep_idx, shape_sep_idx + 1:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_gaussian_cross_attn, :shape_sep_idx, :], k[:, :self.force_gaussian_cross_attn, shape_sep_idx + 1:, :]) * scale
+            dots[:, :self.force_gaussian_cross_attn, shape_sep_idx + 1:, :shape_sep_idx] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_gaussian_cross_attn, shape_sep_idx + 1:, :], k[:, :self.force_gaussian_cross_attn, :shape_sep_idx, :]) * scale
+        else:
+            dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
         mask_value = max_neg_value(dots)
 
         if gaussian_heads:
+            # if self.force_gaussian_cross_attn:
+            #     dots[:, :self.force_gaussian_cross_attn, :shape_sep_idx, :shape_sep_idx] = 0
+            #     dots[:, :self.force_gaussian_cross_attn, shape_sep_idx + 1:, shape_sep_idx + 1:] = 0
             # This could go at line 719 if we don't need the previous attention of the gaussian heads
             dots = torch.cat((dots, gaussian_attn), dim=1)
 
@@ -930,7 +943,8 @@ class AttentionLayers(nn.Module):
         attn_mask = None,
         mems = None,
         return_hiddens = False,
-        gaussian_attn = None
+        gaussian_attn = None,
+        shape_sep_idx = None,
     ):
         assert not (self.cross_attend ^ exists(context)), 'context must be passed in if cross_attend is set to True'
 
@@ -964,11 +978,11 @@ class AttentionLayers(nn.Module):
             if layer_type == 'a':
                 out, inter = block(x, mask = mask, attn_mask = attn_mask, sinusoidal_emb = self.pia_pos_emb,
                                        rel_pos = self.rel_pos, rotary_pos_emb = rotary_pos_emb, prev_attn = prev_attn,
-                                       mem = layer_mem, gaussian_attn = gaussian_attn)
+                                       mem = layer_mem, gaussian_attn = gaussian_attn, shape_sep_idx = shape_sep_idx)
 
 
             elif layer_type == 'c':
-                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn, gaussian_attn = gaussian_attn)
+                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn, gaussian_attn = gaussian_attn, shape_sep_idx = shape_sep_idx)
             elif layer_type == 'f':
                 out = block(x)
 
