@@ -41,7 +41,7 @@ def main(args):
         attn_force_gaussian_cross_attn=args.force_cross_attn,
     ).to(args.device)
 
-    gauss_attn = GaussianAttention(args.sigma)
+    gauss_attn = GaussianAttention(args.sigma).to(args.device)
 
     linear1 = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 32), nn.Tanh(), nn.Linear(32, 64), nn.Tanh(),
                             nn.Linear(64, 128), nn.Tanh(), nn.Linear(128, 256), nn.Tanh(), nn.Linear(256, 512)).to(args.device)
@@ -52,7 +52,7 @@ def main(args):
 
 
     modelname = args.run_name + ".pt"
-    pathfolder= "./models"
+    pathfolder= args.path_model
     model.load_state_dict(torch.load(os.path.join(pathfolder, modelname), map_location=lambda storage, loc: storage))
     linear1.load_state_dict(torch.load(os.path.join(pathfolder, "l1." + modelname), map_location=lambda storage, loc: storage))
     linear2.load_state_dict(torch.load(os.path.join(pathfolder, "l2." + modelname), map_location=lambda storage, loc: storage))
@@ -134,23 +134,27 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--path_data", default="./dataset/FAUSTS_rem.mat")
+    parser.add_argument("--path_model", default="./models")
 
     parser.add_argument("--run_name", default="custom_trained_model")
 
     parser.add_argument("--gaussian_heads", type=int, default=0)
-    parser.add_argument("--sigma", type=float, default=[0.05], nargs="*")
+    parser.add_argument("--sigma", type=float, default=[], nargs="*")
     
     parser.add_argument("--force_cross_attn", type=int, default=0)
 
     parser.add_argument("--device", default="auto")
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     if args.gaussian_heads == 0:
         args.gaussian_heads = False
     elif len(args.sigma) != args.gaussian_heads:
         while len(args.sigma) < args.gaussian_heads:
-            args.sigma.append(args.sigma[-1] * 2)
+            if len(args.sigma) > 0:
+                args.sigma.append(args.sigma[-1] * 2)
+            else:
+                args.sigma.append(0.05)
         args.sigma = args.sigma[:args.gaussian_heads]
 
     if args.force_cross_attn == 0:
@@ -166,32 +170,3 @@ if __name__ == "__main__":
         )
 
     main(args)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -24,6 +24,8 @@ def main(args):
 
     logger = logging.getLogger(args.run_name)
     logger.info(f"training {args.run_name}")
+    logger.info(f"args: {args}")
+    logger.info(f"initial sigma: {args.sigma}")
 
 # ------------------------------------------------------------------------------------------------------------------
 # BEGIN SETUP  -----------------------------------------------------------------------------------------------------
@@ -62,7 +64,10 @@ def main(args):
                             nn.Linear(16, 3)).to(args.device)
 
     if args.learn_sigma:
-        params = list(linear1.parameters()) + list(model.parameters()) + list(linear2.parameters()) + list(gauss_attn.parameters())
+        params = [
+            { "params": list(linear1.parameters()) + list(model.parameters()) + list(linear2.parameters()) },
+            { "params": gauss_attn.parameters(), "lr": args.lr * args.lr_mult}
+        ]
     else:
         for p in gauss_attn.parameters():
             p.requires_grad = False
@@ -70,11 +75,14 @@ def main(args):
     optimizer = torch.optim.Adam(params, lr=args.lr)
 
     if args.resume:
-        model.load_state_dict(torch.load(os.path.join("models", args.run_name + ".pt")))
-        linear1.load_state_dict(torch.load(os.path.join("models", "l1." + args.run_name + ".pt")))
-        linear2.load_state_dict(torch.load(os.path.join("models", "l2." + args.run_name + ".pt")))
-        optimizer.load_state_dict(torch.load(os.path.join("models", "optim." + args.run_name + ".pt")))
-        gauss_attn.load_state_dict(torch.load(os.path.join("models", "gauss_attn." + args.run_name + ".pt")))
+        model.load_state_dict(torch.load(os.path.join(args.path_model, args.run_name + ".pt")))
+        linear1.load_state_dict(torch.load(os.path.join(args.path_model, "l1." + args.run_name + ".pt")))
+        linear2.load_state_dict(torch.load(os.path.join(args.path_model, "l2." + args.run_name + ".pt")))
+        optimizer.load_state_dict(torch.load(os.path.join(args.path_model, "optim." + args.run_name + ".pt")))
+        gauss_attn.load_state_dict(torch.load(os.path.join(args.path_model, "gauss_attn." + args.run_name + ".pt")))
+
+    initial_sigma = gauss_attn.sigmas.clone().detach().cpu()
+    print("initial sigma: ", initial_sigma)
 
 # ------------------------------------------------------------------------------------------------------------------
 # END SETUP  -------------------------------------------------------------------------------------------------------
@@ -150,16 +158,22 @@ def main(args):
 
         print(f"EPOCH: {epoch} HAS FINISHED, in {time.time() - start} SECONDS! ---------------------------------------")
         print(f"LOSS: {ep_loss} --------------------------------------------------------------------------------------")
-        os.makedirs("models", exist_ok=True)
+        os.makedirs(args.path_model, exist_ok=True)
 
-        torch.save(model.state_dict(), os.path.join("models", args.run_name + ".pt"))
-        torch.save(linear1.state_dict(), os.path.join("models", "l1." + args.run_name + ".pt"))
-        torch.save(linear2.state_dict(), os.path.join("models", "l2." + args.run_name + ".pt"))
-        torch.save(optimizer.state_dict(), os.path.join("models", "optim." + args.run_name + ".pt"))
-        torch.save(gauss_attn.state_dict(), os.path.join("models", "gauss_attn." + args.run_name + ".pt"))
+        torch.save(model.state_dict(), os.path.join(args.path_model, args.run_name + ".pt"))
+        torch.save(linear1.state_dict(), os.path.join(args.path_model, "l1." + args.run_name + ".pt"))
+        torch.save(linear2.state_dict(), os.path.join(args.path_model, "l2." + args.run_name + ".pt"))
+        torch.save(optimizer.state_dict(), os.path.join(args.path_model, "optim." + args.run_name + ".pt"))
+        torch.save(gauss_attn.state_dict(), os.path.join(args.path_model, "gauss_attn." + args.run_name + ".pt"))
 
         logger.info(f"ending epoch {epoch}/{args.n_epoch-1}, time {time.time() - start} seconds, loss {ep_loss}")
+
+    logger.info(f"initial sigma: {initial_sigma}")
+    logger.info(f"final sigma: {gauss_attn.sigmas.clone().detach().cpu()}")
     logger.info(f"training {args.run_name} has finished")
+
+    print("initial sigma: ", initial_sigma)
+    print("final sigma: ", gauss_attn.sigmas.clone().detach().cpu())
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -179,6 +193,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16)
 
     parser.add_argument("--path_data", default="dataset/")
+    parser.add_argument("--path_model", default="./models")
 
     parser.add_argument("--resume", default=False, action="store_true")
 
@@ -190,6 +205,8 @@ if __name__ == "__main__":
     parser.add_argument("--force_cross_attn", type=int, default=0)
 
     parser.add_argument("--device", default="auto")
+
+    parser.add_argument("--lr_mult", type=float, default=1.0)
 
     args, _ = parser.parse_known_args()
 
@@ -217,4 +234,3 @@ if __name__ == "__main__":
         )
 
     main(args)
-

@@ -6,10 +6,14 @@ def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma) -> torch.Tensor:
     dist = torch.cdist(x, y, p=1)
     return ((-(dist**2)/(2*(sigma**2))).exp())
 
-def gauss_attn(x:torch.Tensor, sigmas) -> torch.Tensor:
-    y = torch.empty((x.shape[0], 0, x.shape[1], x.shape[1])).to(x.device)
-    for i, sigma in enumerate(sigmas):
-        y = torch.cat((y, point_gauss(x, x, sigma).unsqueeze(1)), dim=1)
+def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor) -> torch.Tensor:
+    dist = torch.cdist(x, x, p=1)
+    dist = dist.unsqueeze(1).repeat((1, sigmas.shape[0], 1, 1))
+    dist = dist.permute((0, 2, 3, 1))
+    sigmas = sigmas.repeat((x.shape[0], 1))
+    sigmas = sigmas.unsqueeze(1).unsqueeze(1)
+    y = ((-(dist**2)/(2*(sigmas**2))).exp())
+    y = y.permute((0, 3, 1, 2))
     return y
 
 class GaussianAttention(torch.nn.Module):
