@@ -12,8 +12,6 @@ import numpy
 from point_gaussian import GaussianAttention
 import logging
 
-logging.basicConfig(filename='train.log', encoding='utf-8', level=logging.DEBUG)
-
 def set_seed(seed):
     random.seed(seed)
     numpy.random.seed(seed)
@@ -22,6 +20,7 @@ def set_seed(seed):
 
 def main(args):
 
+    logging.basicConfig(filename=args.log_file, level=logging.DEBUG)
     logger = logging.getLogger(args.run_name)
     logger.info(f"training {args.run_name}")
     logger.info(f"args: {args}")
@@ -216,6 +215,8 @@ if __name__ == "__main__":
     parser.add_argument("--device", default="auto")
 
     parser.add_argument("--lr_mult", type=float, default=1.0)
+
+    parser.add_argument("--log_file", default="train.log")
 
     args, _ = parser.parse_known_args()
 
