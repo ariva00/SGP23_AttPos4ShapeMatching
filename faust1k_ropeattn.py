@@ -39,6 +39,7 @@ def main(args):
         rotary_emb_dim=64,
         attn_gaussian_heads=args.gaussian_heads,
         attn_force_gaussian_cross_attn=args.force_cross_attn,
+        attn_legacy_force_cross_attn=args.legacy_force_cross_attn,
     ).to(args.device)
 
     gauss_attn = GaussianAttention(args.sigma).to(args.device)
@@ -102,7 +103,14 @@ def main(args):
                 fixed_attn[:, :, :dim1, :dim1] = shape1_gaussian_attn
                 fixed_attn[:, :, dim2:, dim2:] = shape2_gaussian_attn
                 if args.force_cross_attn:
-                    y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx = dim1)
+                    if args.legacy_force_cross_attn:
+                        y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx = dim1)
+                    else:
+                        attn_mask = torch.ones((8, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
+                        attn_mask[:args.force_cross_attn, :dim1, :dim1] = 0
+                        attn_mask[:args.force_cross_attn, dim2:, dim2:] = 0
+                        attn_mask = attn_mask.type(torch.bool)
+                        y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx=dim1, attn_mask=attn_mask)
                 else:
                     y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn)
             else:
@@ -142,6 +150,7 @@ if __name__ == "__main__":
     parser.add_argument("--sigma", type=float, default=[], nargs="*")
     
     parser.add_argument("--force_cross_attn", type=int, default=0)
+    parser.add_argument("--legacy_force_cross_attn", default=False, action="store_true")
 
     parser.add_argument("--device", default="auto")
 
