@@ -632,10 +632,16 @@ class Attention(nn.Module):
         k = self.to_k(k_input)
         v = self.to_v(v_input)
 
-        q = rearrange(q, 'b n (h d) -> b h n d', h = h)
+        if h > 0:
+            q = rearrange(q, 'b n (h d) -> b h n d', h = h)
+        else:
+            q = q.reshape((q.shape[0], 0, q.shape[1], int(self.to_v.out_features/self.heads)))
 
         if not self.one_kv_head:
-            k = rearrange(k, 'b n (h d) -> b h n d', h = h)
+            if h > 0:
+                k = rearrange(k, 'b n (h d) -> b h n d', h = h)
+            else:
+                k = k.reshape((k.shape[0], 0, k.shape[1], int(self.to_v.out_features/self.heads)))
             v = rearrange(v, 'b n (h d) -> b h n d', h = self.heads)
 
         if exists(rotary_pos_emb) and not has_context:

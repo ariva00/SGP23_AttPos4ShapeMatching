@@ -49,7 +49,7 @@ def main(args):
         residual_attn=True,
         rotary_pos_emb=True,
         rotary_emb_dim=64,
-        attn_gaussian_heads=args.gaussian_heads,
+        attn_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
         attn_force_gaussian_cross_attn=args.force_cross_attn,
         attn_legacy_force_cross_attn=args.legacy_force_cross_attn,
     ).to(args.device)
@@ -127,12 +127,16 @@ def main(args):
             inputz = torch.cat((shape1, sep, shape2), 1)
 
             third_tensor = linear1(inputz)
-            if args.gaussian_heads:
-                shape1_gaussian_attn = gauss_attn(shape1)
-                shape2_gaussian_attn = gauss_attn(shape2)
-                fixed_attn = torch.zeros((third_tensor.shape[0], args.gaussian_heads, third_tensor.shape[1], third_tensor.shape[1])).to(args.device)
-                fixed_attn[:, :, :dim1, :dim1] = shape1_gaussian_attn
-                fixed_attn[:, :, dim2:, dim2:] = shape2_gaussian_attn
+            if args.gaussian_heads or args.inf_gaussian_heads:
+                fixed_attn = torch.zeros((third_tensor.shape[0], args.gaussian_heads + args.inf_gaussian_heads, third_tensor.shape[1], third_tensor.shape[1])).to(args.device)
+                if args.gaussian_heads:
+                    shape1_gaussian_attn = gauss_attn(shape1)
+                    shape2_gaussian_attn = gauss_attn(shape2)
+                    fixed_attn[:, args.inf_gaussian_heads:, :dim1, :dim1] = shape1_gaussian_attn
+                    fixed_attn[:, args.inf_gaussian_heads:, dim2:, dim2:] = shape2_gaussian_attn
+                if args.inf_gaussian_heads:
+                    fixed_attn[:, :args.inf_gaussian_heads, :dim1, :dim1] = 1
+                    fixed_attn[:, :args.inf_gaussian_heads, dim2:, dim2:] = 1
                 if args.force_cross_attn:
                     if args.legacy_force_cross_attn:
                         y_hat_l = model(third_tensor, gaussian_attn=fixed_attn, shape_sep_idx = dim1)
@@ -211,6 +215,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--force_cross_attn", type=int, default=0)
     parser.add_argument("--legacy_force_cross_attn", default=False, action="store_true")
+
+    parser.add_argument("--inf_gaussian_heads", type=int, default=0)
 
     parser.add_argument("--device", default="auto")
 
