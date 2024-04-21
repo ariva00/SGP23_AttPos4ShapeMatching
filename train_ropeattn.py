@@ -30,7 +30,7 @@ def main(args):
 # BEGIN SETUP  -----------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------------------------------
 
-    set_seed(0)
+    set_seed(args.seed)
 
     # DATASET
     data_train = SMPLDataset(args.path_data, train=True)
@@ -198,6 +198,8 @@ if __name__ == "__main__":
     parser = ArgumentParser()
 
     parser.add_argument("--run_name", default="custom_trained_model")
+    
+    parser.add_argument("--seed", type=int, default=0)
 
     parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--n_epoch", type=int, default=5000)
@@ -230,12 +232,13 @@ if __name__ == "__main__":
         args.gaussian_heads = False
     elif len(args.sigma) != args.gaussian_heads:
         while len(args.sigma) < args.gaussian_heads:
-            if args.learn_sigma:
-                args.sigma.append(torch.rand(1).item())
-            elif len(args.sigma) > 0:
+            if len(args.sigma) > 0:
                 args.sigma.append(args.sigma[-1] * 2)
             else:
-                args.sigma.append(0.05)
+                if args.learn_sigma:
+                    args.sigma.append(torch.rand(1).item() * 0.1)
+                else:
+                    args.sigma.append(0.05)
         args.sigma = args.sigma[:args.gaussian_heads]
     if args.force_cross_attn == 0:
         args.force_cross_attn = False

@@ -16,12 +16,26 @@ def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor) -> torch.Tensor:
     y = y.permute((0, 3, 1, 2))
     return y
 
-class GaussianAttention(torch.nn.Module):
+class GaussianAttentionLegacy(torch.nn.Module):
     def __init__(self, sigmas):
-        super(GaussianAttention, self).__init__()
+        super(GaussianAttentionLegacy, self).__init__()
         self.sigmas = torch.nn.Parameter(torch.tensor(sigmas))
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
+        return gauss_attn(x, self.sigmas)
+
+class GaussianAttention(torch.nn.Module):
+    def __init__(self, sigmas):
+        super(GaussianAttention, self).__init__()
+        self.h = len(sigmas)
+        self.multiplier = torch.nn.Parameter(torch.rand(1) + 0.5)
+        self.base = torch.nn.Parameter(torch.rand(1))
+        self.sigmas = torch.tensor([self.multiplier * (self.base ** s) for s in range(self.h)])
+
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
+        self.sigmas = torch.tensor(range(self.h)).to(x.device)
+
+        self.sigmas = (self.multiplier * (self.base ** self.sigmas))
         return gauss_attn(x, self.sigmas)
 
 if __name__ == "__main__":

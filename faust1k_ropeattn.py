@@ -9,7 +9,7 @@ import torch.nn as nn
 import os
 import random
 import numpy
-from point_gaussian import GaussianAttention
+from point_gaussian import GaussianAttention, GaussianAttentionLegacy
 
 def set_seed(seed):
     random.seed(seed)
@@ -42,7 +42,10 @@ def main(args):
         attn_legacy_force_cross_attn=args.legacy_force_cross_attn,
     ).to(args.device)
 
-    gauss_attn = GaussianAttention(args.sigma).to(args.device)
+    if args.legacy_gaussian_heads:
+        gauss_attn = GaussianAttentionLegacy(args.sigma).to(args.device)
+    else:
+        gauss_attn = GaussianAttention(args.sigma).to(args.device)
 
     linear1 = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 32), nn.Tanh(), nn.Linear(32, 64), nn.Tanh(),
                             nn.Linear(64, 128), nn.Tanh(), nn.Linear(128, 256), nn.Tanh(), nn.Linear(256, 512)).to(args.device)
@@ -151,6 +154,7 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", default="custom_trained_model")
 
     parser.add_argument("--gaussian_heads", type=int, default=0)
+    parser.add_argument("--legacy_gaussian_heads", default=False, action="store_true")
     parser.add_argument("--sigma", type=float, default=[], nargs="*")
     
     parser.add_argument("--force_cross_attn", type=int, default=0)
