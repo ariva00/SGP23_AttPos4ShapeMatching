@@ -517,7 +517,7 @@ class Attention(nn.Module):
         one_kv_head = False,
         value_dim_head = None,
         gaussian_heads = False,
-        force_gaussian_cross_attn = False,
+        force_cross_attn = False,
         legacy_force_cross_attn = False,
     ):
         super().__init__()
@@ -530,7 +530,7 @@ class Attention(nn.Module):
         self.gaussian_heads = gaussian_heads
         heads = heads - gaussian_heads if gaussian_heads else heads
 
-        self.force_gaussian_cross_attn = force_gaussian_cross_attn
+        self.force_cross_attn = force_cross_attn
         self.legacy_force_cross_attn = legacy_force_cross_attn
 
         value_dim_head = default(value_dim_head, dim_head)
@@ -673,17 +673,17 @@ class Attention(nn.Module):
 
         kv_einsum_eq = 'b h j d' if not self.one_kv_head else 'b j d'
 
-        if self.force_gaussian_cross_attn:
+        if self.force_cross_attn:
             if self.legacy_force_cross_attn:
                 dots = torch.zeros(q.shape[0], q.shape[1], q.shape[2], k.shape[2], device = device)
-                dots[:, self.force_gaussian_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_gaussian_cross_attn:, :, :], k[:, self.force_gaussian_cross_attn:, :, :]) * scale
-                dots[:, :self.force_gaussian_cross_attn, :shape_sep_idx, shape_sep_idx + 1:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_gaussian_cross_attn, :shape_sep_idx, :], k[:, :self.force_gaussian_cross_attn, shape_sep_idx + 1:, :]) * scale
-                dots[:, :self.force_gaussian_cross_attn, shape_sep_idx + 1:, :shape_sep_idx] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_gaussian_cross_attn, shape_sep_idx + 1:, :], k[:, :self.force_gaussian_cross_attn, :shape_sep_idx, :]) * scale
+                dots[:, self.force_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_cross_attn:, :, :], k[:, self.force_cross_attn:, :, :]) * scale
+                dots[:, :self.force_cross_attn, :shape_sep_idx, shape_sep_idx + 1:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, :shape_sep_idx, :], k[:, :self.force_cross_attn, shape_sep_idx + 1:, :]) * scale
+                dots[:, :self.force_cross_attn, shape_sep_idx + 1:, :shape_sep_idx] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, shape_sep_idx + 1:, :], k[:, :self.force_cross_attn, :shape_sep_idx, :]) * scale
             else:
                 dots = torch.ones(q.shape[0], q.shape[1], q.shape[2], k.shape[2], device = device) * float('-inf')
-                dots[:, self.force_gaussian_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_gaussian_cross_attn:, :, :], k[:, self.force_gaussian_cross_attn:, :, :]) * scale
-                dots[:, :self.force_gaussian_cross_attn, :shape_sep_idx + 1, shape_sep_idx:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_gaussian_cross_attn, :shape_sep_idx + 1, :], k[:, :self.force_gaussian_cross_attn, shape_sep_idx:, :]) * scale
-                dots[:, :self.force_gaussian_cross_attn, shape_sep_idx:, :shape_sep_idx + 1] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_gaussian_cross_attn, shape_sep_idx:, :], k[:, :self.force_gaussian_cross_attn, :shape_sep_idx + 1, :]) * scale
+                dots[:, self.force_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_cross_attn:, :, :], k[:, self.force_cross_attn:, :, :]) * scale
+                dots[:, :self.force_cross_attn, :shape_sep_idx + 1, shape_sep_idx:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, :shape_sep_idx + 1, :], k[:, :self.force_cross_attn, shape_sep_idx:, :]) * scale
+                dots[:, :self.force_cross_attn, shape_sep_idx:, :shape_sep_idx + 1] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, shape_sep_idx:, :], k[:, :self.force_cross_attn, :shape_sep_idx + 1, :]) * scale
         else:
             dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
         mask_value = max_neg_value(dots)
@@ -806,11 +806,13 @@ class AttentionLayers(nn.Module):
         qk_norm_attn_seq_len = None,
         zero_init_branch_output = False,
         use_linear_attn=False,
+        use_gaussian_blocks=False,
         **kwargs
     ):
         super().__init__()
         ff_kwargs, kwargs = groupby_prefix_and_trim('ff_', kwargs)
         attn_kwargs, kwargs = groupby_prefix_and_trim('attn_', kwargs)
+        gauss_kwargs, kwargs = groupby_prefix_and_trim('gauss_', kwargs)
         dim_head = attn_kwargs.get('dim_head', DEFAULT_DIM_HEAD)
         if dim_head_custom != -1:
             dim_head = dim_head_custom
@@ -857,6 +859,9 @@ class AttentionLayers(nn.Module):
             default_block = ('a', 'c', 'f')
         elif cross_attend and only_cross:
             default_block = ('c', 'f')
+        elif use_gaussian_blocks:
+            assert gauss_kwargs, 'gaussian attention kwargs must be provided'
+            default_block = ('g', 'f')
         else:
             default_block = ('a', 'f')
 
@@ -897,7 +902,7 @@ class AttentionLayers(nn.Module):
             layer_types = default_block * depth
 
         self.layer_types = layer_types
-        self.num_attn_layers = len(list(filter(equals('a'), layer_types)))
+        self.num_attn_layers = len(list(filter(equals('a'), layer_types))) + len(list(filter(equals('g'), layer_types)))
         self.use_linear_attn = use_linear_attn
         # calculate token shifting
 
@@ -912,6 +917,8 @@ class AttentionLayers(nn.Module):
                 layer = Attention(dim, heads=heads, causal=causal, **attn_kwargs)
             elif layer_type == 'c':
                 layer = Attention(dim, heads = heads, **attn_kwargs)
+            elif layer_type == 'g':
+                layer = Attention(dim, heads=heads, causal=causal, **gauss_kwargs, **attn_kwargs)
             elif layer_type == 'f':
                 layer = FeedForward(dim, **ff_kwargs)
                 layer = layer if not macaron else Scale(0.5, layer)
@@ -926,7 +933,7 @@ class AttentionLayers(nn.Module):
             residual_fn = GRUGating if gate_residual else Residual
             residual = residual_fn(dim, scale_residual = scale_residual, scale_residual_constant = scale_residual_constant)
 
-            layer_uses_qk_norm = use_qk_norm_attn and layer_type in ('a', 'c')
+            layer_uses_qk_norm = use_qk_norm_attn and layer_type in ('a', 'g', 'c')
 
             pre_branch_norm = norm_fn() if pre_norm and not layer_uses_qk_norm else None
             post_branch_norm = norm_fn() if sandwich_norm or layer_uses_qk_norm else None
@@ -973,7 +980,7 @@ class AttentionLayers(nn.Module):
         for ind, (layer_type, (norm, block, residual_fn)) in enumerate(zip(self.layer_types, self.layers)):
             is_last = ind == (len(self.layers) - 1)
 
-            if layer_type == 'a':
+            if layer_type == 'a' or layer_type == 'g':
                 if return_hiddens:
                     hiddens.append(x)
                 layer_mem = mems.pop(0) if mems else None
@@ -988,11 +995,13 @@ class AttentionLayers(nn.Module):
             if layer_type == 'a':
                 out, inter = block(x, mask = mask, attn_mask = attn_mask, sinusoidal_emb = self.pia_pos_emb,
                                        rel_pos = self.rel_pos, rotary_pos_emb = rotary_pos_emb, prev_attn = prev_attn,
-                                       mem = layer_mem, gaussian_attn = gaussian_attn, shape_sep_idx = shape_sep_idx)
-
-
+                                       mem = layer_mem, shape_sep_idx = shape_sep_idx)
             elif layer_type == 'c':
-                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn, gaussian_attn = gaussian_attn, shape_sep_idx = shape_sep_idx)
+                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn, shape_sep_idx = shape_sep_idx)
+            elif layer_type == 'g':
+                out, inter = block(x, mask = mask, attn_mask = attn_mask, sinusoidal_emb = self.pia_pos_emb,
+                                       rel_pos = self.rel_pos, rotary_pos_emb = rotary_pos_emb, prev_attn = prev_attn,
+                                       mem = layer_mem, gaussian_attn = gaussian_attn, shape_sep_idx = shape_sep_idx)
             elif layer_type == 'f':
                 out = block(x)
 
@@ -1001,10 +1010,10 @@ class AttentionLayers(nn.Module):
 
             x = residual_fn(out, residual)
 
-            if layer_type in ('a', 'c') and return_hiddens:
+            if layer_type in ('a', 'c', 'g') and return_hiddens:
                 intermediates.append(inter)
 
-            if layer_type == 'a' and self.residual_attn:
+            if (layer_type == 'a' or layer_type == 'g') and self.residual_attn:
                 prev_attn = inter.pre_softmax_attn
             elif layer_type == 'c' and self.cross_residual_attn:
                 prev_cross_attn = inter.pre_softmax_attn

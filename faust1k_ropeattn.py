@@ -21,6 +21,13 @@ def main(args):
 
     set_seed(0)
 
+    custom_layers = ()
+
+    for i in range(6):
+        if i in args.gaussian_blocks:
+            custom_layers += ('g', 'f')
+        else:
+            custom_layers += ('a', 'f')
 
     faust = loadmat(args.path_data)
     shapes = faust["vertices"]
@@ -37,8 +44,11 @@ def main(args):
         residual_attn=True,
         rotary_pos_emb=True,
         rotary_emb_dim=64,
-        attn_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
-        attn_force_gaussian_cross_attn=args.force_cross_attn,
+        #custom_layers=('a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'g', 'f'),
+        #custom_layers=('g', 'f', 'g', 'f', 'g', 'f', 'g', 'f', 'g', 'f', 'g', 'f'),
+        custom_layers=custom_layers,
+        gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
+        attn_force_cross_attn=args.force_cross_attn,
         attn_legacy_force_cross_attn=args.legacy_force_cross_attn,
     ).to(args.device)
 
@@ -60,7 +70,6 @@ def main(args):
     gauss_attn.load_state_dict(torch.load(os.path.join(pathfolder, "gauss_attn." + modelname), map_location=lambda storage, loc: storage))
 
     print(modelname)
-    print(model)
     print("MODEL RESUMED ---------------------------------------------------------------------------------------\n")
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -96,8 +105,9 @@ def main(args):
             dim1 = points_A.unsqueeze(0).shape[1]
             dim2 = points_B.unsqueeze(0).shape[1] + 1
 
+            fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads + args.inf_gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
+            attn_mask = torch.ones((8, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
             if args.gaussian_heads or args.inf_gaussian_heads:
-                fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads + args.inf_gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
                 if args.gaussian_heads:
                     shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0))
                     shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0))
@@ -107,18 +117,15 @@ def main(args):
                     fixed_attn[:, :args.inf_gaussian_heads, :dim1, :dim1] = 1
                     fixed_attn[:, :args.inf_gaussian_heads, dim2:, dim2:] = 1
                 if args.force_cross_attn:
-                    if args.legacy_force_cross_attn:
-                        y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx = dim1)
-                    else:
-                        attn_mask = torch.ones((8, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
+                    if not args.legacy_force_cross_attn:
                         attn_mask[:args.force_cross_attn, :dim1, :dim1] = 0
                         attn_mask[:args.force_cross_attn, dim2:, dim2:] = 0
-                        attn_mask = attn_mask.type(torch.bool)
-                        y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx=dim1, attn_mask=attn_mask)
-                else:
-                    y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn)
-            else:
-                y_hat_1_m = model(third_tensor2)
+
+            if args.mask_head > -1:
+                attn_mask[args.mask_head, :, :] = 0
+            attn_mask = attn_mask.type(torch.bool)
+
+            y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx=dim1, attn_mask=attn_mask)
 
             y_hat1 = linear2(y_hat_1_m)
             y_hat_2 = y_hat1[:, :1000, :]
@@ -158,7 +165,11 @@ if __name__ == "__main__":
 
     parser.add_argument("--inf_gaussian_heads", type=int, default=0)
 
+    parser.add_argument("--mask_head", type=int, default=-1)
+
     parser.add_argument("--device", default="auto")
+
+    parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
 
     args, _ = parser.parse_known_args()
 

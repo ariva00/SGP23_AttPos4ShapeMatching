@@ -32,6 +32,14 @@ def main(args):
 
     set_seed(0)
 
+    custom_layers = ()
+
+    for i in range(6):
+        if i in args.gaussian_blocks:
+            custom_layers += ('g', 'f')
+        else:
+            custom_layers += ('a', 'f')
+
     # DATASET
     data_train = SMPLDataset(args.path_data, train=True)
 
@@ -49,8 +57,10 @@ def main(args):
         residual_attn=True,
         rotary_pos_emb=True,
         rotary_emb_dim=64,
-        attn_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
-        attn_force_gaussian_cross_attn=args.force_cross_attn,
+        #custom_layers=('a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'g', 'f'),
+        custom_layers=custom_layers,
+        gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
+        attn_force_cross_attn=args.force_cross_attn,
         attn_legacy_force_cross_attn=args.legacy_force_cross_attn,
     ).to(args.device)
 
@@ -223,6 +233,8 @@ if __name__ == "__main__":
     parser.add_argument("--lr_mult", type=float, default=1.0)
 
     parser.add_argument("--log_file", default="train.log")
+
+    parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
 
     args, _ = parser.parse_known_args()
 
