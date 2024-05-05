@@ -44,8 +44,6 @@ def main(args):
         residual_attn=True,
         rotary_pos_emb=True,
         rotary_emb_dim=64,
-        #custom_layers=('a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'g', 'f'),
-        #custom_layers=('g', 'f', 'g', 'f', 'g', 'f', 'g', 'f', 'g', 'f', 'g', 'f'),
         custom_layers=custom_layers,
         gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
         attn_force_cross_attn=args.force_cross_attn,

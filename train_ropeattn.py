@@ -57,7 +57,6 @@ def main(args):
         residual_attn=True,
         rotary_pos_emb=True,
         rotary_emb_dim=64,
-        #custom_layers=('a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'a', 'f', 'g', 'f'),
         custom_layers=custom_layers,
         gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
         attn_force_cross_attn=args.force_cross_attn,
@@ -108,6 +107,9 @@ def main(args):
     linear2 = linear2.train()
     gauss_attn = gauss_attn.train()
     lossmse = nn.MSELoss()
+
+    best_loss = float("inf")
+
     for epoch in range(args.n_epoch):
         logger.info(f"starting epoch {epoch}/{args.n_epoch-1}")
         start = time.time()
@@ -189,6 +191,15 @@ def main(args):
 
         logger.info(f"ending epoch {epoch}/{args.n_epoch-1}, time {time.time() - start} seconds, loss {ep_loss}")
 
+        if args.save_best and ep_loss < best_loss:
+            best_loss = ep_loss
+            torch.save(model.state_dict(), os.path.join(args.path_model, "best." + args.run_name + ".pt"))
+            torch.save(linear1.state_dict(), os.path.join(args.path_model, "l1." + "best." + args.run_name + ".pt"))
+            torch.save(linear2.state_dict(), os.path.join(args.path_model, "l2." + "best." + args.run_name + ".pt"))
+            torch.save(optimizer.state_dict(), os.path.join(args.path_model, "optim." + "best." + args.run_name + ".pt"))
+            torch.save(gauss_attn.state_dict(), os.path.join(args.path_model, "gauss_attn." + "best." + args.run_name + ".pt"))
+            logger.info(f"new best epoch {epoch}/{args.n_epoch-1}, loss {ep_loss}")
+
     logger.info(f"initial sigma: {initial_sigma}")
     logger.info(f"final sigma: {gauss_attn.sigmas.clone().detach().cpu()}")
     logger.info(f"training {args.run_name} has finished")
@@ -235,6 +246,8 @@ if __name__ == "__main__":
     parser.add_argument("--log_file", default="train.log")
 
     parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
+
+    parser.add_argument("--save_best", default=False, action="store_true")
 
     args, _ = parser.parse_known_args()
 
