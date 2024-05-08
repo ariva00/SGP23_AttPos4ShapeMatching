@@ -29,7 +29,7 @@ def main(args):
         else:
             custom_layers += ('a', 'f')
 
-    faust = loadmat(args.path_data)
+    faust = loadmat(os.path.join(args.path_data, args.dataset + ".mat"))
     shapes = faust["vertices"]
     faces = faust["f"] - 1
     n_pairs = 100
@@ -66,6 +66,9 @@ def main(args):
     linear1.load_state_dict(torch.load(os.path.join(pathfolder, "l1." + modelname), map_location=lambda storage, loc: storage))
     linear2.load_state_dict(torch.load(os.path.join(pathfolder, "l2." + modelname), map_location=lambda storage, loc: storage))
     gauss_attn.load_state_dict(torch.load(os.path.join(pathfolder, "gauss_attn." + modelname), map_location=lambda storage, loc: storage))
+    print(gauss_attn.sigmas)
+
+    #gauss_attn.sigmas = nn.Parameter(gauss_attn.sigmas * 0.741)
 
     print(modelname)
     print("MODEL RESUMED ---------------------------------------------------------------------------------------\n")
@@ -80,6 +83,7 @@ def main(args):
 
     with torch.no_grad():
         err = []
+        err_couple = []
         for _ in tqdm(range(n_pairs)):
 
             shape_A_idx = np.random.randint(n)
@@ -90,11 +94,14 @@ def main(args):
             shape_A = torch.from_numpy(shapes[shape_A_idx])
             shape_B = torch.from_numpy(shapes[shape_B_idx])
 
+            #shape_A = shape_A - shape_B.mean(0)
+            #shape_B = shape_B - shape_B.mean(0)
+
             geod = approximate_geodesic_distances(shape_B, faces.astype("int"))
             geod /= np.max(geod)
 
-            points_A = area_weighted_normalization(shape_A).to(args.device)
-            points_B = area_weighted_normalization(shape_B).to(args.device)
+            points_A = area_weighted_normalization(shape_A, rescale=not args.no_rescale).to(args.device)
+            points_B = area_weighted_normalization(shape_B, rescale=not args.no_rescale).to(args.device)
 
             sep = -torch.ones(points_B.unsqueeze(0).size()[0], 1, 3).to(args.device)
             third_tensor_l = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
@@ -137,27 +144,35 @@ def main(args):
             if d12 < d21:
                 d = torch.cdist(points_A.float(), y_hat_1).squeeze(0).to(args.device)
                 ne = get_errors(d, geod)
+                err_couple.append(np.sum(ne))
                 err.extend(ne)
             else:
                 d = torch.cdist(points_B.float(), y_hat_2).squeeze(0).to(args.device)
                 ne = get_errors(d.transpose(1, 0), geod)
+                err_couple.append(np.sum(ne))
                 err.extend(ne)
 
-        print("ERROR: ", np.mean(np.array(err)))
+        print("ERROR MIN: ", np.array(err).min())
+        print("ERROR MAX: ", np.array(err).max())
+        print("ERROR MEAN: ", np.mean(np.array(err)))
+        print("ERROR VAR: ", np.var(np.array(err)))
+
+        return np.array(err), np.array(err_couple)
 
 
 
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("--path_data", default="./dataset/FAUSTS_rem.mat")
+    parser.add_argument("--path_data", default="./dataset")
+    parser.add_argument("--dataset", default="FAUSTS_rem")
     parser.add_argument("--path_model", default="./models")
 
     parser.add_argument("--run_name", default="custom_trained_model")
 
     parser.add_argument("--gaussian_heads", type=int, default=0)
     parser.add_argument("--sigma", type=float, default=[], nargs="*")
-    
+
     parser.add_argument("--force_cross_attn", type=int, default=0)
     parser.add_argument("--legacy_force_cross_attn", default=False, action="store_true")
 
@@ -166,6 +181,7 @@ if __name__ == "__main__":
     parser.add_argument("--mask_head", type=int, default=-1)
 
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--no_rescale", default=False, action="store_true")
 
     parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
 
