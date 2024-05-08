@@ -51,12 +51,13 @@ def main(args):
     model = Encoder(
         dim=512,
         depth=6,
-        heads=8,
-        dim_head_custom = 64,
+        heads=args.n_heads,
+        dim_head_custom = args.dim_head,
+        attn_dim_head = args.dim_head,
         pre_norm=False,
         residual_attn=True,
         rotary_pos_emb=True,
-        rotary_emb_dim=64,
+        rotary_emb_dim = args.dim_head,
         custom_layers=custom_layers,
         gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
         attn_force_cross_attn=args.force_cross_attn,
@@ -229,6 +230,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--resume", default=False, action="store_true")
 
+    parser.add_argument("--n_heads", type=int, default=8)
+    parser.add_argument("--dim_head", type=int, default=64)
+
     parser.add_argument("--gaussian_heads", type=int, default=0)
     parser.add_argument("--sigma", type=float, default=[], nargs="*")
     parser.add_argument("--no_sep_loss", default=False, action="store_true")
@@ -248,6 +252,7 @@ if __name__ == "__main__":
     parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
 
     parser.add_argument("--save_best", default=False, action="store_true")
+
 
     args, _ = parser.parse_known_args()
 
