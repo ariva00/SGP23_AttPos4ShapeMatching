@@ -10,6 +10,7 @@ import os
 import random
 import numpy
 from point_gaussian import GaussianAttention
+from transmatching.Utils.utils import RandomRotateCustom
 
 def set_seed(seed):
     random.seed(seed)
@@ -35,15 +36,20 @@ def main(args):
     n_pairs = 100
     n = shapes.shape[0]
 
+    if args.gauss_dataset:
+        gauss_faust = loadmat(os.path.join(args.path_data, args.gauss_dataset + ".mat"))
+        gauss_shapes = gauss_faust["vertices"]
+
     model = Encoder(
         dim=512,
         depth=6,
-        heads=8,
-        dim_head_custom = 64,
+        heads=args.n_heads,
+        dim_head_custom = args.dim_head,
+        attn_dim_head = args.dim_head,
         pre_norm=False,
         residual_attn=True,
         rotary_pos_emb=True,
-        rotary_emb_dim=64,
+        rotary_emb_dim=args.dim_head,
         custom_layers=custom_layers,
         gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
         attn_force_cross_attn=args.force_cross_attn,
@@ -84,6 +90,7 @@ def main(args):
     with torch.no_grad():
         err = []
         err_couple = []
+        couples = []
         for _ in tqdm(range(n_pairs)):
 
             shape_A_idx = np.random.randint(n)
@@ -91,17 +98,28 @@ def main(args):
             while shape_A_idx == shape_B_idx:  # avoid taking A exactly equal to B
                 shape_B_idx = np.random.randint(n)
 
+            couples.append((shape_A_idx, shape_B_idx))
+
             shape_A = torch.from_numpy(shapes[shape_A_idx])
             shape_B = torch.from_numpy(shapes[shape_B_idx])
 
-            #shape_A = shape_A - shape_B.mean(0)
-            #shape_B = shape_B - shape_B.mean(0)
+            if args.random_rotation:
+                shape_A = RandomRotateCustom(shape_A, 180, 1)
+                shape_B = RandomRotateCustom(shape_B, 180, 1)
+
+            if args.gauss_dataset:
+                gauss_shape_A = torch.from_numpy(gauss_shapes[shape_A_idx])
+                gauss_shape_B = torch.from_numpy(gauss_shapes[shape_B_idx])
 
             geod = approximate_geodesic_distances(shape_B, faces.astype("int"))
             geod /= np.max(geod)
 
             points_A = area_weighted_normalization(shape_A, rescale=not args.no_rescale).to(args.device)
             points_B = area_weighted_normalization(shape_B, rescale=not args.no_rescale).to(args.device)
+
+            if args.gauss_dataset:
+                gauss_points_A = area_weighted_normalization(gauss_shape_A, rescale=not args.gauss_no_rescale).to(args.device)
+                gauss_points_B = area_weighted_normalization(gauss_shape_B, rescale=not args.gauss_no_rescale).to(args.device)
 
             sep = -torch.ones(points_B.unsqueeze(0).size()[0], 1, 3).to(args.device)
             third_tensor_l = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
@@ -111,11 +129,15 @@ def main(args):
             dim2 = points_B.unsqueeze(0).shape[1] + 1
 
             fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads + args.inf_gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
-            attn_mask = torch.ones((8, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
+            attn_mask = torch.ones((args.n_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
             if args.gaussian_heads or args.inf_gaussian_heads:
                 if args.gaussian_heads:
-                    shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0))
-                    shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0))
+                    if args.gauss_dataset:
+                        shape1_gaussian_attn = gauss_attn(gauss_points_A.unsqueeze(0))
+                        shape2_gaussian_attn = gauss_attn(gauss_points_B.unsqueeze(0))
+                    else:
+                        shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0))
+                        shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0))
                     fixed_attn[:, args.inf_gaussian_heads:, :dim1, :dim1] = shape1_gaussian_attn
                     fixed_attn[:, args.inf_gaussian_heads:, dim2:, dim2:] = shape2_gaussian_attn
                 if args.inf_gaussian_heads:
@@ -145,19 +167,19 @@ def main(args):
                 d = torch.cdist(points_A.float(), y_hat_1).squeeze(0).to(args.device)
                 ne = get_errors(d, geod)
                 err_couple.append(np.sum(ne))
-                err.extend(ne)
+                err.append(ne)
             else:
                 d = torch.cdist(points_B.float(), y_hat_2).squeeze(0).to(args.device)
                 ne = get_errors(d.transpose(1, 0), geod)
                 err_couple.append(np.sum(ne))
-                err.extend(ne)
+                err.append(ne)
 
         print("ERROR MIN: ", np.array(err).min())
         print("ERROR MAX: ", np.array(err).max())
         print("ERROR MEAN: ", np.mean(np.array(err)))
         print("ERROR VAR: ", np.var(np.array(err)))
 
-        return np.array(err), np.array(err_couple)
+        return np.array(err), np.array(err_couple), np.array(couples)
 
 
 
@@ -182,6 +204,15 @@ if __name__ == "__main__":
 
     parser.add_argument("--device", default="auto")
     parser.add_argument("--no_rescale", default=False, action="store_true")
+    parser.add_argument("--gauss_dataset", default=None)
+    parser.add_argument("--gauss_no_rescale", default=False, action="store_true")
+
+    
+    parser.add_argument("--n_heads", type=int, default=8)
+    parser.add_argument("--dim_head", type=int, default=64)
+
+    
+    parser.add_argument("--random_rotation", default=False, action="store_true")
 
     parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
 

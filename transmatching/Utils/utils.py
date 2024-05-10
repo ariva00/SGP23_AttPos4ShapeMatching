@@ -169,7 +169,7 @@ def RandomRotateCustom(shape, degree, axis):
     else:
         matrix = [[cos, sin, 0], [-sin, cos, 0], [0, 0, 1]]
 
-    return torch.matmul(shape, torch.Tensor(matrix).to(device))
+    return torch.matmul(shape, torch.Tensor(matrix).type(shape.dtype).to(device))
 
 def RandomRotateCustomAllAxis(shape, degree):
 
