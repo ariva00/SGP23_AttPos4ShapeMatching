@@ -178,19 +178,19 @@ def RandomRotateCustomAllAxis(shape, degree):
     degree = np.pi * np.random.uniform(low=-np.abs(degree), high=np.abs(degree)) / 180.0
     sin, cos = np.sin(degree), np.cos(degree)
     matrix = [[1, 0, 0], [0, cos, sin], [0, -sin, cos]]
-    shape = torch.matmul(shape, torch.Tensor(matrix).to(device))
+    shape = torch.matmul(shape, torch.Tensor(matrix).type(shape.dtype).to(device))
 
     degree = np.pi * np.random.uniform(low=-np.abs(degree), high=np.abs(degree)) / 180.0
     sin, cos = np.sin(degree), np.cos(degree)
     matrix = [[cos, 0, -sin], [0, 1, 0], [sin, 0, cos]]
-    shape = torch.matmul(shape, torch.Tensor(matrix).to(device))
+    shape = torch.matmul(shape, torch.Tensor(matrix).type(shape.dtype).to(device))
 
 
     degree = np.pi * np.random.uniform(low=-np.abs(degree), high=np.abs(degree)) / 180.0
     sin, cos = np.sin(degree), np.cos(degree)
     matrix = [[cos, sin, 0], [-sin, cos, 0], [0, 0, 1]]
 
-    return torch.matmul(shape, torch.Tensor(matrix).to(device))
+    return torch.matmul(shape, torch.Tensor(matrix).type(shape.dtype).to(device))
 
 
 def split_shape(shape, threshold=10000):

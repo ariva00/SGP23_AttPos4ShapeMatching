@@ -10,7 +10,7 @@ import os
 import random
 import numpy
 from point_gaussian import GaussianAttention
-from transmatching.Utils.utils import RandomRotateCustom
+from transmatching.Utils.utils import RandomRotateCustomAllAxis
 
 def set_seed(seed):
     random.seed(seed)
@@ -33,7 +33,6 @@ def main(args):
     faust = loadmat(os.path.join(args.path_data, args.dataset + ".mat"))
     shapes = faust["vertices"]
     faces = faust["f"] - 1
-    n_pairs = 100
     n = shapes.shape[0]
 
     if args.gauss_dataset:
@@ -82,6 +81,24 @@ def main(args):
 # ------------------------------------------------------------------------------------------------------------------
 # END SETUP  -------------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------------------------------
+
+    if args.extended:
+        n_pairs = 10000
+        pairs = np.meshgrid(range(100), range(100), dtype=int)
+        pairs[0] = pairs[0].ravel()
+        pairs[1] = pairs[1].ravel()
+        pairs = np.array(pairs).T
+    else:
+        n_pairs = 100
+        pairs = np.zeros((n_pairs, 2), dtype=int)
+        for i in range(n_pairs):
+            shape_A_idx = np.random.randint(n)
+            shape_B_idx = np.random.randint(n)
+            while shape_A_idx == shape_B_idx:  # avoid taking A exactly equal to B
+                shape_B_idx = np.random.randint(n)
+            pairs[i, 0] = shape_A_idx
+            pairs[i, 1] = shape_B_idx
+
     model.eval()
     linear1.eval()
     linear2.eval()
@@ -91,12 +108,10 @@ def main(args):
         err = []
         err_couple = []
         couples = []
-        for _ in tqdm(range(n_pairs)):
+        for i in tqdm(range(n_pairs)):
 
-            shape_A_idx = np.random.randint(n)
-            shape_B_idx = np.random.randint(n)
-            while shape_A_idx == shape_B_idx:  # avoid taking A exactly equal to B
-                shape_B_idx = np.random.randint(n)
+            shape_A_idx = pairs[i, 0]
+            shape_B_idx = pairs[i, 1]
 
             couples.append((shape_A_idx, shape_B_idx))
 
@@ -104,8 +119,8 @@ def main(args):
             shape_B = torch.from_numpy(shapes[shape_B_idx])
 
             if args.random_rotation:
-                shape_A = RandomRotateCustom(shape_A, 180, 1)
-                shape_B = RandomRotateCustom(shape_B, 180, 1)
+                shape_A = RandomRotateCustomAllAxis(shape_A, 360)
+                shape_B = RandomRotateCustomAllAxis(shape_B, 360)
 
             if args.gauss_dataset:
                 gauss_shape_A = torch.from_numpy(gauss_shapes[shape_A_idx])
@@ -122,11 +137,29 @@ def main(args):
                 gauss_points_B = area_weighted_normalization(gauss_shape_B, rescale=not args.gauss_no_rescale).to(args.device)
 
             sep = -torch.ones(points_B.unsqueeze(0).size()[0], 1, 3).to(args.device)
-            third_tensor_l = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
-            third_tensor2 = linear1(third_tensor_l)
 
             dim1 = points_A.unsqueeze(0).shape[1]
-            dim2 = points_B.unsqueeze(0).shape[1] + 1
+            dim2 = points_B.unsqueeze(0).shape[1]
+
+            if args.random_permutation:
+                permidx1 = torch.randperm(dim1)
+                points_A = points_A[permidx1, :]
+                gt1 = torch.zeros_like(permidx1)
+                gt1[permidx1] = torch.arange(dim1)
+
+                permidx2 = torch.randperm(dim2)
+                points_B = points_B[permidx2, :]
+                gt2 = torch.zeros_like(permidx2)
+                gt2[permidx2] = torch.arange(dim2)
+
+                if args.gauss_dataset:
+                    gauss_points_A = gauss_points_A[permidx1, :]
+                    gauss_points_B = gauss_points_B[permidx2, :]
+
+            dim2 = dim1 + 1
+
+            third_tensor_l = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
+            third_tensor2 = linear1(third_tensor_l)
 
             fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads + args.inf_gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
             attn_mask = torch.ones((args.n_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
@@ -155,9 +188,15 @@ def main(args):
             y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx=dim1, attn_mask=attn_mask)
 
             y_hat1 = linear2(y_hat_1_m)
-            y_hat_2 = y_hat1[:, :1000, :]
+            y_hat_2 = y_hat1[:, :dim1, :]
 
-            y_hat_1 = y_hat1[:, 1001:, :]
+            y_hat_1 = y_hat1[:, dim2:, :]
+
+            if args.random_permutation:
+                y_hat_1 = y_hat_1[:, gt2, :]
+                y_hat_2 = y_hat_2[:, gt1, :]
+                points_B = points_B[gt2, :]
+                points_A = points_A[gt1, :]
 
             d12 = chamfer_loss(points_A.float(), y_hat_1).to(args.device)
             d21 = chamfer_loss(points_B.float(), y_hat_2).to(args.device)
@@ -213,8 +252,11 @@ if __name__ == "__main__":
 
     
     parser.add_argument("--random_rotation", default=False, action="store_true")
+    parser.add_argument("--random_permutation", default=False, action="store_true")
 
     parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
+
+    parser.add_argument("--extended", default=False, action="store_true")
 
     args, _ = parser.parse_known_args()
 
