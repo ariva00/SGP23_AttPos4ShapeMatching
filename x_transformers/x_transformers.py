@@ -517,8 +517,7 @@ class Attention(nn.Module):
         one_kv_head = False,
         value_dim_head = None,
         gaussian_heads = False,
-        force_cross_attn = False,
-        legacy_force_cross_attn = False,
+        force_cross_attn = False
     ):
         super().__init__()
         self.scale = dim_head ** -0.5
@@ -531,7 +530,6 @@ class Attention(nn.Module):
         heads = heads - gaussian_heads if gaussian_heads else heads
 
         self.force_cross_attn = force_cross_attn
-        self.legacy_force_cross_attn = legacy_force_cross_attn
 
         value_dim_head = default(value_dim_head, dim_head)
         q_dim = k_dim = dim_head * heads
@@ -674,16 +672,10 @@ class Attention(nn.Module):
         kv_einsum_eq = 'b h j d' if not self.one_kv_head else 'b j d'
 
         if self.force_cross_attn:
-            if self.legacy_force_cross_attn:
-                dots = torch.zeros(q.shape[0], q.shape[1], q.shape[2], k.shape[2], device = device)
-                dots[:, self.force_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_cross_attn:, :, :], k[:, self.force_cross_attn:, :, :]) * scale
-                dots[:, :self.force_cross_attn, :shape_sep_idx, shape_sep_idx + 1:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, :shape_sep_idx, :], k[:, :self.force_cross_attn, shape_sep_idx + 1:, :]) * scale
-                dots[:, :self.force_cross_attn, shape_sep_idx + 1:, :shape_sep_idx] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, shape_sep_idx + 1:, :], k[:, :self.force_cross_attn, :shape_sep_idx, :]) * scale
-            else:
-                dots = torch.ones(q.shape[0], q.shape[1], q.shape[2], k.shape[2], device = device) * float('-inf')
-                dots[:, self.force_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_cross_attn:, :, :], k[:, self.force_cross_attn:, :, :]) * scale
-                dots[:, :self.force_cross_attn, :shape_sep_idx + 1, shape_sep_idx:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, :shape_sep_idx + 1, :], k[:, :self.force_cross_attn, shape_sep_idx:, :]) * scale
-                dots[:, :self.force_cross_attn, shape_sep_idx:, :shape_sep_idx + 1] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, shape_sep_idx:, :], k[:, :self.force_cross_attn, :shape_sep_idx + 1, :]) * scale
+            dots = torch.ones(q.shape[0], q.shape[1], q.shape[2], k.shape[2], device = device) * float('-inf')
+            dots[:, self.force_cross_attn:, :, :] = einsum('b h i d, b h j d -> b h i j', q[:, self.force_cross_attn:, :, :], k[:, self.force_cross_attn:, :, :]) * scale
+            dots[:, :self.force_cross_attn, :shape_sep_idx + 1, shape_sep_idx:] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, :shape_sep_idx + 1, :], k[:, :self.force_cross_attn, shape_sep_idx:, :]) * scale
+            dots[:, :self.force_cross_attn, shape_sep_idx:, :shape_sep_idx + 1] = einsum('b h i d, b h j d -> b h i j', q[:, :self.force_cross_attn, shape_sep_idx:, :], k[:, :self.force_cross_attn, :shape_sep_idx + 1, :]) * scale
         else:
             dots = einsum(f'b h i d, {kv_einsum_eq} -> b h i j', q, k) * scale
         mask_value = max_neg_value(dots)

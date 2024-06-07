@@ -51,8 +51,7 @@ def main(args):
         rotary_emb_dim=args.dim_head,
         custom_layers=custom_layers,
         gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
-        attn_force_cross_attn=args.force_cross_attn,
-        attn_legacy_force_cross_attn=args.legacy_force_cross_attn,
+        attn_force_cross_attn=args.force_cross_attn
     ).to(args.device)
 
     gauss_attn = GaussianAttention(args.sigma).to(args.device)
@@ -177,9 +176,8 @@ def main(args):
                     fixed_attn[:, :args.inf_gaussian_heads, :dim1, :dim1] = 1
                     fixed_attn[:, :args.inf_gaussian_heads, dim2:, dim2:] = 1
                 if args.force_cross_attn:
-                    if not args.legacy_force_cross_attn:
-                        attn_mask[:args.force_cross_attn, :dim1, :dim1] = 0
-                        attn_mask[:args.force_cross_attn, dim2:, dim2:] = 0
+                    attn_mask[:args.force_cross_attn, :dim1, :dim1] = 0
+                    attn_mask[:args.force_cross_attn, dim2:, dim2:] = 0
 
             if args.mask_head > -1:
                 attn_mask[args.mask_head, :, :] = 0
@@ -235,7 +233,6 @@ if __name__ == "__main__":
     parser.add_argument("--sigma", type=float, default=[], nargs="*")
 
     parser.add_argument("--force_cross_attn", type=int, default=0)
-    parser.add_argument("--legacy_force_cross_attn", default=False, action="store_true")
 
     parser.add_argument("--inf_gaussian_heads", type=int, default=0)
 
