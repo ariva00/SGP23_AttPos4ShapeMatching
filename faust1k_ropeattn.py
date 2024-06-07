@@ -4,13 +4,11 @@ from argparse import ArgumentParser
 from transmatching.Utils.utils import  get_errors, chamfer_loss, area_weighted_normalization, approximate_geodesic_distances
 import numpy as np
 from scipy.io import loadmat
-from x_transformers import Encoder
-import torch.nn as nn
 import os
 import random
 import numpy
-from point_gaussian import GaussianAttention
 from transmatching.Utils.utils import RandomRotateCustomAllAxis
+from model import EncoderPointTransfomer
 
 def set_seed(seed):
     random.seed(seed)
@@ -39,40 +37,20 @@ def main(args):
         gauss_faust = loadmat(os.path.join(args.path_data, args.gauss_dataset + ".mat"))
         gauss_shapes = gauss_faust["vertices"]
 
-    model = Encoder(
-        dim=512,
-        depth=6,
+    model = EncoderPointTransfomer(
         heads=args.n_heads,
-        dim_head_custom = args.dim_head,
-        attn_dim_head = args.dim_head,
-        pre_norm=False,
-        residual_attn=True,
-        rotary_pos_emb=True,
-        rotary_emb_dim=args.dim_head,
+        dim_head=args.dim_head,
         custom_layers=custom_layers,
-        gauss_gaussian_heads=args.gaussian_heads + args.inf_gaussian_heads,
-        attn_force_cross_attn=args.force_cross_attn
+        gaussian_heads=args.gaussian_heads,
+        inf_gaussian_heads=args.inf_gaussian_heads,
+        force_cross_attn=args.force_cross_attn,
+        sigma=args.sigma
     ).to(args.device)
-
-    gauss_attn = GaussianAttention(args.sigma).to(args.device)
-
-    linear1 = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 32), nn.Tanh(), nn.Linear(32, 64), nn.Tanh(),
-                            nn.Linear(64, 128), nn.Tanh(), nn.Linear(128, 256), nn.Tanh(), nn.Linear(256, 512)).to(args.device)
-
-    linear2 = nn.Sequential(nn.Linear(512, 256), nn.Tanh(), nn.Linear(256, 128), nn.Tanh(), nn.Linear(128, 64),
-                            nn.Tanh(), nn.Linear(64, 32), nn.Tanh(), nn.Linear(32, 16), nn.Tanh(),
-                            nn.Linear(16, 3)).to(args.device)
-
 
     modelname = args.run_name + ".pt"
     pathfolder= args.path_model
     model.load_state_dict(torch.load(os.path.join(pathfolder, modelname), map_location=lambda storage, loc: storage))
-    linear1.load_state_dict(torch.load(os.path.join(pathfolder, "l1." + modelname), map_location=lambda storage, loc: storage))
-    linear2.load_state_dict(torch.load(os.path.join(pathfolder, "l2." + modelname), map_location=lambda storage, loc: storage))
-    gauss_attn.load_state_dict(torch.load(os.path.join(pathfolder, "gauss_attn." + modelname), map_location=lambda storage, loc: storage))
-    print(gauss_attn.sigmas)
-
-    #gauss_attn.sigmas = nn.Parameter(gauss_attn.sigmas * 0.741)
+    print(model.gauss_attn.sigmas)
 
     print(modelname)
     print("MODEL RESUMED ---------------------------------------------------------------------------------------\n")
@@ -99,9 +77,6 @@ def main(args):
             pairs[i, 1] = shape_B_idx
 
     model.eval()
-    linear1.eval()
-    linear2.eval()
-    gauss_attn.eval()
 
     with torch.no_grad():
         err = []
@@ -137,76 +112,48 @@ def main(args):
 
             sep = -torch.ones(points_B.unsqueeze(0).size()[0], 1, 3).to(args.device)
 
-            dim1 = points_A.unsqueeze(0).shape[1]
-            dim2 = points_B.unsqueeze(0).shape[1]
+            dim_A = points_A.unsqueeze(0).shape[1]
+            dim_B = points_B.unsqueeze(0).shape[1]
 
             if args.random_permutation:
-                permidx1 = torch.randperm(dim1)
-                points_A = points_A[permidx1, :]
-                gt1 = torch.zeros_like(permidx1)
-                gt1[permidx1] = torch.arange(dim1)
+                permidx_A = torch.randperm(dim_A)
+                points_A = points_A[permidx_A, :]
+                gt_A = torch.zeros_like(permidx_A)
+                gt_A[permidx_A] = torch.arange(dim_A)
 
-                permidx2 = torch.randperm(dim2)
-                points_B = points_B[permidx2, :]
-                gt2 = torch.zeros_like(permidx2)
-                gt2[permidx2] = torch.arange(dim2)
+                permidx_B = torch.randperm(dim_B)
+                points_B = points_B[permidx_B, :]
+                gt_B = torch.zeros_like(permidx_B)
+                gt_B[permidx_B] = torch.arange(dim_B)
 
                 if args.gauss_dataset:
-                    gauss_points_A = gauss_points_A[permidx1, :]
-                    gauss_points_B = gauss_points_B[permidx2, :]
+                    gauss_points_A = gauss_points_A[permidx_A, :]
+                    gauss_points_B = gauss_points_B[permidx_B, :]
 
-            dim2 = dim1 + 1
+            dim_B = dim_A + 1
 
-            third_tensor_l = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
-            third_tensor2 = linear1(third_tensor_l)
+            x = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
 
-            fixed_attn = torch.zeros((third_tensor2.shape[0], args.gaussian_heads + args.inf_gaussian_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
-            attn_mask = torch.ones((args.n_heads, third_tensor2.shape[1], third_tensor2.shape[1])).to(args.device)
-            if args.gaussian_heads or args.inf_gaussian_heads:
-                if args.gaussian_heads:
-                    if args.gauss_dataset:
-                        shape1_gaussian_attn = gauss_attn(gauss_points_A.unsqueeze(0))
-                        shape2_gaussian_attn = gauss_attn(gauss_points_B.unsqueeze(0))
-                    else:
-                        shape1_gaussian_attn = gauss_attn(points_A.unsqueeze(0))
-                        shape2_gaussian_attn = gauss_attn(points_B.unsqueeze(0))
-                    fixed_attn[:, args.inf_gaussian_heads:, :dim1, :dim1] = shape1_gaussian_attn
-                    fixed_attn[:, args.inf_gaussian_heads:, dim2:, dim2:] = shape2_gaussian_attn
-                if args.inf_gaussian_heads:
-                    fixed_attn[:, :args.inf_gaussian_heads, :dim1, :dim1] = 1
-                    fixed_attn[:, :args.inf_gaussian_heads, dim2:, dim2:] = 1
-                if args.force_cross_attn:
-                    attn_mask[:args.force_cross_attn, :dim1, :dim1] = 0
-                    attn_mask[:args.force_cross_attn, dim2:, dim2:] = 0
-
-            if args.mask_head > -1:
-                attn_mask[args.mask_head, :, :] = 0
-            attn_mask = attn_mask.type(torch.bool)
-
-            y_hat_1_m = model(third_tensor2, gaussian_attn=fixed_attn, shape_sep_idx=dim1, attn_mask=attn_mask)
-
-            y_hat1 = linear2(y_hat_1_m)
-            y_hat_2 = y_hat1[:, :dim1, :]
-
-            y_hat_1 = y_hat1[:, dim2:, :]
+            y = model(x, mask_head=args.mask_head)
+            y_shape_A = y[:, dim_B:, :] # shape_B points in shape_A space
+            y_shape_B = y[:, :dim_A, :] # shape_A points in shape_B space
 
             if args.random_permutation:
-                y_hat_1 = y_hat_1[:, gt2, :]
-                y_hat_2 = y_hat_2[:, gt1, :]
-                points_B = points_B[gt2, :]
-                points_A = points_A[gt1, :]
+                y_shape_A = y_shape_A[:, gt_B, :]
+                y_shape_B = y_shape_B[:, gt_A, :]
+                points_B = points_B[gt_B, :]
+                points_A = points_A[gt_A, :]
 
-            d12 = chamfer_loss(points_A.float(), y_hat_1).to(args.device)
-            d21 = chamfer_loss(points_B.float(), y_hat_2).to(args.device)
+            d_A = chamfer_loss(points_A.float(), y_shape_A).to(args.device)
+            d_B = chamfer_loss(points_B.float(), y_shape_B).to(args.device)
 
-
-            if d12 < d21:
-                d = torch.cdist(points_A.float(), y_hat_1).squeeze(0).to(args.device)
+            if d_A < d_B:
+                d = torch.cdist(points_A.float(), y_shape_A).squeeze(0).to(args.device)
                 ne = get_errors(d, geod)
                 err_couple.append(np.sum(ne))
                 err.append(ne)
             else:
-                d = torch.cdist(points_B.float(), y_hat_2).squeeze(0).to(args.device)
+                d = torch.cdist(points_B.float(), y_shape_B).squeeze(0).to(args.device)
                 ne = get_errors(d.transpose(1, 0), geod)
                 err_couple.append(np.sum(ne))
                 err.append(ne)
@@ -223,37 +170,38 @@ def main(args):
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("--path_data", default="./dataset")
-    parser.add_argument("--dataset", default="FAUSTS_rem")
-    parser.add_argument("--path_model", default="./models")
 
-    parser.add_argument("--run_name", default="custom_trained_model")
+    parser.add_argument("--run_name", default="custom_trained_model", help="name of the run, determines the name of the saved model")
 
-    parser.add_argument("--gaussian_heads", type=int, default=0)
-    parser.add_argument("--sigma", type=float, default=[], nargs="*")
+    parser.add_argument("--path_data", default="dataset/", help="path to dir containing the dataset")
+    parser.add_argument("--path_model", default="./models", help="path to dir where the model will be saved")
+    parser.add_argument("--dataset", default="FAUSTS_rem", help="name of the dataset")
 
-    parser.add_argument("--force_cross_attn", type=int, default=0)
+    parser.add_argument("--n_heads", type=int, default=8, help="number of attention heads (Including Gaussian Heads)")
+    parser.add_argument("--dim_head", type=int, default=64, help="dimension of the attention heads")
 
-    parser.add_argument("--inf_gaussian_heads", type=int, default=0)
+    parser.add_argument("--gaussian_heads", type=int, default=0, help="number of gaussian attention heads")
+    parser.add_argument("--sigma", type=float, default=[], nargs="*", help="initial sigma for the gaussian attention heads")
 
-    parser.add_argument("--mask_head", type=int, default=-1)
+    parser.add_argument("--force_cross_attn", type=int, default=0, help="masks the self attention part of the dot-product attention heads")
 
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--no_rescale", default=False, action="store_true")
-    parser.add_argument("--gauss_dataset", default=None)
-    parser.add_argument("--gauss_no_rescale", default=False, action="store_true")
+    parser.add_argument("--inf_gaussian_heads", type=int, default=0, help="number of infinite gaussian attention heads, these heads have a uniform attention for all points")
 
-    
-    parser.add_argument("--n_heads", type=int, default=8)
-    parser.add_argument("--dim_head", type=int, default=64)
+    parser.add_argument("--device", default="auto", help="device to use for training, auto will use cuda if available, mps if available, else cpu")
 
-    
-    parser.add_argument("--random_rotation", default=False, action="store_true")
-    parser.add_argument("--random_permutation", default=False, action="store_true")
+    parser.add_argument("--mask_head", type=int, default=-1, help="masks the attention head at the specified index")
 
-    parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*")
+    parser.add_argument("--no_rescale", default=False, action="store_true", help="do not rescale the shapes")
+    parser.add_argument("--gauss_dataset", default=None, help="name of the dataset to use for the gaussian attention euclidean distances (if different from the main dataset)")
+    parser.add_argument("--gauss_no_rescale", default=False, action="store_true", help="do not rescale the shapes of the gauss_dataset")
 
-    parser.add_argument("--extended", default=False, action="store_true")
+
+    parser.add_argument("--random_rotation", default=False, action="store_true", help="apply random rotation to the shapes")
+    parser.add_argument("--random_permutation", default=False, action="store_true", help="apply random permutation to the shapes points")
+
+    parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*", help="blocks to use gaussian attention in, the default is in all blocks")
+
+    parser.add_argument("--extended", default=False, action="store_true", help="use an extended set of pairs for evaluation")
 
     args, _ = parser.parse_known_args()
 
