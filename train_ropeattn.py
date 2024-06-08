@@ -10,6 +10,7 @@ import random
 import numpy
 import logging
 from model import EncoderPointTransfomer
+from point_gaussian import GaussianAttention
 
 def set_seed(seed):
     random.seed(seed)
@@ -57,6 +58,10 @@ def main(args):
         sigma=args.sigma
     ).to(args.device)
 
+    gauss_attn = GaussianAttention([0.5]).to(args.device)
+    gauss_attn.sigmas.requires_grad = False
+    gauss_attn.eval()
+
     if args.learn_sigma:
         params = [
             { "params": list(model.linear_in.parameters()) + list(model.encoder.parameters()) + list(model.linear_out.parameters()) },
@@ -100,6 +105,9 @@ def main(args):
             shape_A = shapes[:args.batch_size // 2, :, :]
             shape_B = shapes[args.batch_size // 2:, :, :]
 
+            shape_A_gaussian_attn = torch.nn.functional.softmax(gauss_attn(shape_A), dim=3).expand(-1, 4, -1, -1)
+            shape_B_gaussian_attn = torch.nn.functional.softmax(gauss_attn(shape_B), dim=3).expand(-1, 4, -1, -1)
+
             dim_A = num_points
             permidx_A = torch.randperm(dim_A)
             shape_A = shape_A[:, permidx_A, :]
@@ -112,14 +120,27 @@ def main(args):
             gt_B = torch.zeros_like(permidx_B)
             gt_B[permidx_B] = torch.arange(dim_B)
 
+            shape_A_gaussian_attn = shape_A_gaussian_attn[:, :, permidx_A, :]
+            shape_B_gaussian_attn = shape_B_gaussian_attn[:, :, permidx_B, :]
+
             sep = -torch.ones(shape_A.shape[0], 1, 3).to(args.device)
 
             dim_B = dim_A +1
             x = torch.cat((shape_A, sep, shape_B), 1)
 
-            y = model(x)
+            y, hiddens = model(x, return_hiddens=True)
+            post_softmax_attn = hiddens.attn_intermediates[5].post_softmax_attn
             y_shape_A = y[:, dim_B:, :] # shape_B points in shape_A space
             y_shape_B = y[:, :dim_A, :] # shape_A points in shape_B space
+
+            #attn_loss = (pre_softmax_attn[:, :4, :dim_A, :dim_A] - shape_A_gaussian_attn).abs().sum() + (pre_softmax_attn[:, :4, dim_B:, dim_B:] - shape_B_gaussian_attn).abs().sum()
+            #attn_loss += (pre_softmax_attn[:, 4:, dim_B:, :dim_A] - shape_AB_gaussian_attn).abs().sum() + (pre_softmax_attn[:, 4:, :dim_A, dim_B:] - shape_BA_gaussian_attn).abs().sum()
+
+            #attn_loss = (1 - torch.einsum("b h i j, b h i j -> b h i", post_softmax_attn[:, :4, :dim_A, :dim_A], shape_A_gaussian_attn)).sum()
+            #attn_loss += (1 - torch.einsum("b h i j, b h i j -> b h i", post_softmax_attn[:, :4, dim_B:, dim_B:], shape_B_gaussian_attn)).sum()
+
+            attn_loss = (1 - torch.einsum("b h i j, b h i j -> b h i", post_softmax_attn[:, :4, :dim_A, :dim_A], shape_A_gaussian_attn)).sum()
+            attn_loss += (1 - torch.einsum("b h i j, b h i j -> b h i", post_softmax_attn[:, :4, dim_B:, dim_B:], shape_B_gaussian_attn)).sum()
 
             if args.no_sep_loss:
                 loss = ((y_shape_A[:, gt_B, :] - shape_A[:, gt_A, :]) ** 2).sum() + \
@@ -128,6 +149,8 @@ def main(args):
                 loss = ((y_shape_A[:, gt_B, :] - shape_A[:, gt_A, :]) ** 2).sum() + \
                        ((y_shape_B[:, gt_A, :] - shape_B[:, gt_B, :]) ** 2).sum() + \
                        lossmse(y[:, dim_A, :],sep[:, 0, :])
+
+            loss += attn_loss
 
             loss.backward()
             optimizer.step()
