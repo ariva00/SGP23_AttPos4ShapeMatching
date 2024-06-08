@@ -17,7 +17,7 @@ class EncoderPointTransfomer(nn.Module):
             force_cross_attn=False,
             depth=6
             ) -> None:
-        super().__init__()
+        super(EncoderPointTransfomer, self).__init__()
 
         self.gaussian_heads = gaussian_heads
         self.inf_gaussian_heads = inf_gaussian_heads
@@ -68,7 +68,7 @@ class EncoderPointTransfomer(nn.Module):
             nn.Linear(16, 3)
         )
     
-    def forward(self, x, sep_idx=None, mask_head=-1, return_hiddens=False):
+    def forward(self, x:torch.Tensor, sep_idx=None, mask_head=-1, return_hiddens=False):
         if sep_idx is None:
             sep_idx = x.shape[1] // 2
         dim1 = sep_idx
@@ -79,8 +79,8 @@ class EncoderPointTransfomer(nn.Module):
             shape2_gaussian_attn = self.gauss_attn(x[:, dim2:])
 
         x = self.linear_in(x)
-        fixed_attn = torch.zeros((x.shape[0], self.gaussian_heads + self.inf_gaussian_heads, x.shape[1], x.shape[1])).to(x.device)
-        attn_mask = torch.ones((8, x.shape[1], x.shape[1])).to(x.device)
+        attn_mask = torch.ones((8, x.shape[1], x.shape[1])) if self.force_cross_attn or mask_head > -1 else None
+        fixed_attn = torch.zeros((x.shape[0], self.gaussian_heads + self.inf_gaussian_heads, x.shape[1], x.shape[1])) if self.gaussian_heads or self.inf_gaussian_heads else None
         if self.gaussian_heads or self.inf_gaussian_heads:
             if self.gaussian_heads:
                 fixed_attn[:, self.inf_gaussian_heads:, :dim1, :dim1] = shape1_gaussian_attn
@@ -91,14 +91,12 @@ class EncoderPointTransfomer(nn.Module):
             if self.force_cross_attn:
                 attn_mask[:self.force_cross_attn, :dim1, :dim1] = 0
                 attn_mask[:self.force_cross_attn, dim2:, dim2:] = 0
-            else:
-                x = self.encoder(x, gaussian_attn=fixed_attn)
-        else:
-            x = self.encoder(x)
 
         if mask_head > -1:
             attn_mask[mask_head, :, :] = 0
-        attn_mask = attn_mask.type(torch.bool)
+
+        if attn_mask is not None:
+            attn_mask = attn_mask.type(torch.bool)
 
         if return_hiddens:
             x, hiddens = self.encoder(x, gaussian_attn=fixed_attn, shape_sep_idx=dim1, attn_mask=attn_mask, return_hiddens=True)
