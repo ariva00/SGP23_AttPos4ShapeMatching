@@ -7,14 +7,50 @@ def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma) -> torch.Tensor:
     return ((-(dist**2)/(2*(sigma**2))).exp())
 
 def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor) -> torch.Tensor:
+    if sigmas.dim() == 1:
+        sigmas = sigmas.repeat((x.shape[0], 1))
     dist = torch.cdist(x, x, p=1)
-    dist = dist.unsqueeze(1).repeat((1, sigmas.shape[0], 1, 1))
+    dist = dist.unsqueeze(1).repeat((1, sigmas.shape[1], 1, 1))
     dist = dist.permute((0, 2, 3, 1))
-    sigmas = sigmas.repeat((x.shape[0], 1))
     sigmas = sigmas.unsqueeze(1).unsqueeze(1)
     y = ((-(dist**2)/(2*(sigmas**2))).exp())
     y = y.permute((0, 3, 1, 2))
     return y
+
+def estimate_sigmas(x:torch.Tensor, attn:torch.Tensor) -> torch.Tensor:
+    dist = torch.cdist(x, x, p=1)
+    dist = dist.unsqueeze(1).repeat((1, attn.shape[1], 1, 1))
+    dist = dist.permute((0, 2, 3, 1))
+    attn = attn.permute((0, 2, 3, 1))
+    sigmas = torch.sqrt((-(dist**2)/(2*torch.log(attn)))).nanmean(dim=(1, 2))
+    # nanmean probably presents a bug in autograd that causes the gradients to be NaNs
+    # more investigation is needed
+    # https://github.com/pytorch/pytorch/issues/67180
+    # https://github.com/pytorch/pytorch/issues/4132
+    # This is a hack to replace NaNs with the mean of the sigmas
+    # This doesn't work because it causes inconsistencies autograd can't handle.
+    # sigmas = torch.sqrt((-(dist**2)/(2*torch.log(attn))))
+    # sigmas[sigmas.isnan()] = (sigmas.isnan() * sigmas.nanmean(dim=(1, 2), keepdim=True))[sigmas.isnan()]
+    # sigmas = sigmas.mean(dim=(1, 2))
+    # maybe masked_fill can be used to replace NaNs with the mean of the sigmas
+    return sigmas
+
+def gauss_loss(x:torch.Tensor, attn:torch.Tensor) -> torch.Tensor:
+    dist = torch.cdist(x, x, p=1)
+    _, indices = dist.sort(dim=1, descending=False)
+    shape = attn.shape
+
+    indices = indices.unsqueeze(1).repeat((1, attn.shape[1], 1, 1))
+    row_i = (attn.shape[3] * torch.arange(0, attn.shape[2], device=x.device)).repeat_interleave((attn.shape[3]))
+    head_i = (row_i.shape[0] * torch.arange(0, attn.shape[1], device=x.device)).repeat_interleave((row_i.shape[0])) + row_i.repeat(attn.shape[1])
+    batch_i = (head_i.shape[0] * torch.arange(0, attn.shape[0], device=x.device)).repeat_interleave((head_i.shape[0])) + head_i.repeat(attn.shape[0])
+    indices = indices.ravel() + batch_i
+    attn = attn.ravel()
+    attn = attn[indices]
+    attn = attn.reshape(shape)
+    loss = attn[:,:,:,1:] - attn[:,:,:,:-1]
+    loss = torch.nn.functional.relu(loss)
+    return loss
 
 class GaussianAttention(torch.nn.Module):
     def __init__(self, sigmas):

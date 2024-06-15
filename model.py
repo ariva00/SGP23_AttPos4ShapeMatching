@@ -15,6 +15,7 @@ class EncoderPointTransfomer(nn.Module):
             dim_head=64,
             custom_layers=None,
             force_cross_attn=False,
+            force_self_attn=False,
             depth=6
             ) -> None:
         super(EncoderPointTransfomer, self).__init__()
@@ -22,6 +23,7 @@ class EncoderPointTransfomer(nn.Module):
         self.gaussian_heads = gaussian_heads
         self.inf_gaussian_heads = inf_gaussian_heads
         self.force_cross_attn = force_cross_attn
+        self.force_self_attn = force_self_attn
 
         self.encoder = Encoder(
             dim=dim,
@@ -34,8 +36,7 @@ class EncoderPointTransfomer(nn.Module):
             rotary_pos_emb=True,
             rotary_emb_dim = dim_head,
             custom_layers=custom_layers,
-            gauss_gaussian_heads=gaussian_heads + inf_gaussian_heads,
-            attn_force_cross_attn=force_cross_attn
+            gauss_gaussian_heads=gaussian_heads + inf_gaussian_heads
         )
 
         self.gauss_attn = GaussianAttention(sigma)
@@ -79,8 +80,8 @@ class EncoderPointTransfomer(nn.Module):
             shape2_gaussian_attn = self.gauss_attn(x[:, dim2:])
 
         x = self.linear_in(x)
-        attn_mask = torch.ones((8, x.shape[1], x.shape[1])) if self.force_cross_attn or mask_head > -1 else None
-        fixed_attn = torch.zeros((x.shape[0], self.gaussian_heads + self.inf_gaussian_heads, x.shape[1], x.shape[1])) if self.gaussian_heads or self.inf_gaussian_heads else None
+        attn_mask = torch.ones((8, x.shape[1], x.shape[1]), device=x.device) if self.force_cross_attn or self.force_self_attn or mask_head > -1 else None
+        fixed_attn = torch.zeros((x.shape[0], self.gaussian_heads + self.inf_gaussian_heads, x.shape[1], x.shape[1]), device=x.device) if self.gaussian_heads or self.inf_gaussian_heads else None
         if self.gaussian_heads or self.inf_gaussian_heads:
             if self.gaussian_heads:
                 fixed_attn[:, self.inf_gaussian_heads:, :dim1, :dim1] = shape1_gaussian_attn
@@ -88,9 +89,13 @@ class EncoderPointTransfomer(nn.Module):
             if self.inf_gaussian_heads:
                 fixed_attn[:, :self.inf_gaussian_heads, :dim1, :dim1] = 1
                 fixed_attn[:, :self.inf_gaussian_heads, dim2:, dim2:] = 1
-            if self.force_cross_attn:
-                attn_mask[:self.force_cross_attn, :dim1, :dim1] = 0
-                attn_mask[:self.force_cross_attn, dim2:, dim2:] = 0
+
+        if self.force_self_attn:
+            attn_mask[-self.force_self_attn:, :dim1, dim2:] = 0
+            attn_mask[-self.force_self_attn:, dim2:, :dim1] = 0
+        if self.force_cross_attn:
+            attn_mask[:self.force_cross_attn, :dim1, :dim1] = 0
+            attn_mask[:self.force_cross_attn, dim2:, dim2:] = 0
 
         if mask_head > -1:
             attn_mask[mask_head, :, :] = 0
