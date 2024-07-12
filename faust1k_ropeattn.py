@@ -44,12 +44,19 @@ def main(args):
         gaussian_heads=args.gaussian_heads,
         inf_gaussian_heads=args.inf_gaussian_heads,
         force_cross_attn=args.force_cross_attn,
+        force_self_attn=args.force_self_attn,
         sigma=args.sigma
     ).to(args.device)
 
     modelname = args.run_name + ".pt"
     pathfolder= args.path_model
-    model.load_state_dict(torch.load(os.path.join(pathfolder, modelname), map_location=lambda storage, loc: storage))
+    if args.legacy_model:
+        model.gauss_attn.load_state_dict(torch.load(os.path.join(pathfolder, "gauss_attn." + modelname), map_location=lambda storage, loc: storage))
+        model.linear_in.load_state_dict(torch.load(os.path.join(pathfolder, "l1." + modelname), map_location=lambda storage, loc: storage))
+        model.linear_out.load_state_dict(torch.load(os.path.join(pathfolder, "l2." + modelname), map_location=lambda storage, loc: storage))
+        model.encoder.load_state_dict(torch.load(os.path.join(pathfolder, modelname), map_location=lambda storage, loc: storage))
+    else:
+        model.load_state_dict(torch.load(os.path.join(pathfolder, modelname), map_location=lambda storage, loc: storage))
     print(model.gauss_attn.sigmas)
 
     print(modelname)
@@ -91,6 +98,10 @@ def main(args):
 
             shape_A = torch.from_numpy(shapes[shape_A_idx])
             shape_B = torch.from_numpy(shapes[shape_B_idx])
+
+            if args.normalize:
+                shape_A = shape_A / shape_A.abs().max(dim=0).values.max(dim=0).values.unsqueeze(0).unsqueeze(0).repeat_interleave(shape_A.shape[0], dim=0).repeat_interleave(shape_A.shape[1], dim=1)
+                shape_B = shape_B / shape_B.abs().max(dim=0).values.max(dim=0).values.unsqueeze(0).unsqueeze(0).repeat_interleave(shape_B.shape[0], dim=0).repeat_interleave(shape_B.shape[1], dim=1)
 
             if args.random_rotation:
                 shape_A = RandomRotateCustomAllAxis(shape_A, 360)
@@ -184,8 +195,13 @@ if __name__ == "__main__":
     parser.add_argument("--sigma", type=float, default=[], nargs="*", help="initial sigma for the gaussian attention heads")
 
     parser.add_argument("--force_cross_attn", type=int, default=0, help="masks the self attention part of the dot-product attention heads")
+    parser.add_argument("--force_self_attn", type=int, default=0, help="masks the self attention part of the dot-product attention heads")
 
     parser.add_argument("--inf_gaussian_heads", type=int, default=0, help="number of infinite gaussian attention heads, these heads have a uniform attention for all points")
+
+    parser.add_argument("--condition_self", type=int, default=0, help="number of heads to condition to self attention")
+    parser.add_argument("--condition_cross", type=int, default=0, help="number of heads to condition to cross attention")
+    parser.add_argument("--condition_mask", default=False, action="store_true", help="mask the conditioned heads to only condition the correct diagonals of the attention matrices")
 
     parser.add_argument("--device", default="auto", help="device to use for training, auto will use cuda if available, mps if available, else cpu")
 
@@ -195,6 +211,7 @@ if __name__ == "__main__":
     parser.add_argument("--gauss_dataset", default=None, help="name of the dataset to use for the gaussian attention euclidean distances (if different from the main dataset)")
     parser.add_argument("--gauss_no_rescale", default=False, action="store_true", help="do not rescale the shapes of the gauss_dataset")
 
+    parser.add_argument("--normalize", default=False, action="store_true", help="normalize the input shapes to the range [-1, 1]")
 
     parser.add_argument("--random_rotation", default=False, action="store_true", help="apply random rotation to the shapes")
     parser.add_argument("--random_permutation", default=False, action="store_true", help="apply random permutation to the shapes points")
@@ -202,6 +219,8 @@ if __name__ == "__main__":
     parser.add_argument("--gaussian_blocks", type=int, default=list(range(6)), nargs="*", help="blocks to use gaussian attention in, the default is in all blocks")
 
     parser.add_argument("--extended", default=False, action="store_true", help="use an extended set of pairs for evaluation")
+
+    parser.add_argument("--legacy_model", default=False, action="store_true", help="use the legacy model save format (four different files instead of one)")
 
     args, _ = parser.parse_known_args()
 
@@ -217,6 +236,15 @@ if __name__ == "__main__":
 
     if args.force_cross_attn == 0:
         args.force_cross_attn = False
+
+    if args.condition_self == 0:
+        args.condition_self = False
+    if args.condition_cross == 0:
+        args.condition_cross = False
+
+    if args.condition_mask:
+        args.force_cross_attn = args.condition_cross
+        args.force_self_attn = args.condition_self
 
     if args.device == "auto":
         args.device = (

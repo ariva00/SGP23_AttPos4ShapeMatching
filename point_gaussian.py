@@ -38,8 +38,8 @@ def estimate_sigmas(x:torch.Tensor, attn:torch.Tensor) -> torch.Tensor:
 def gauss_loss(x:torch.Tensor, attn:torch.Tensor) -> torch.Tensor:
     dist = torch.cdist(x, x, p=1)
     _, indices = dist.sort(dim=1, descending=False)
-    shape = attn.shape
 
+    shape = attn.shape
     indices = indices.unsqueeze(1).repeat((1, attn.shape[1], 1, 1))
     row_i = (attn.shape[3] * torch.arange(0, attn.shape[2], device=x.device)).repeat_interleave((attn.shape[3]))
     head_i = (row_i.shape[0] * torch.arange(0, attn.shape[1], device=x.device)).repeat_interleave((row_i.shape[0])) + row_i.repeat(attn.shape[1])
@@ -48,9 +48,23 @@ def gauss_loss(x:torch.Tensor, attn:torch.Tensor) -> torch.Tensor:
     attn = attn.ravel()
     attn = attn[indices]
     attn = attn.reshape(shape)
-    loss = attn[:,:,:,1:] - attn[:,:,:,:-1]
-    loss = torch.nn.functional.relu(loss)
-    return loss
+    sort_loss = attn[:,:,:,1:] - attn[:,:,:,:-1]
+    # diff_loss = attn[:,1:,:,:] - attn[:,:-1,:,:]
+    return sort_loss.relu().sum() #+ diff_loss.relu().sum()
+
+def gauss_loss_by_index(attn:torch.Tensor, indices:torch.Tensor) -> torch.Tensor:
+    shape = attn.shape
+    indices = indices.unsqueeze(1).repeat((1, attn.shape[1], 1, 1))
+    row_i = (attn.shape[3] * torch.arange(0, attn.shape[2], device=attn.device)).repeat_interleave((attn.shape[3]))
+    head_i = (row_i.shape[0] * torch.arange(0, attn.shape[1], device=attn.device)).repeat_interleave((row_i.shape[0])) + row_i.repeat(attn.shape[1])
+    batch_i = (head_i.shape[0] * torch.arange(0, attn.shape[0], device=attn.device)).repeat_interleave((head_i.shape[0])) + head_i.repeat(attn.shape[0])
+    indices = indices.ravel() + batch_i
+    attn = attn.ravel()
+    attn = attn[indices]
+    attn = attn.reshape(shape)
+    sort_loss = attn[:,:,:,1:] - attn[:,:,:,:-1]
+    diff_loss = attn[:,1:,:,:] - attn[:,:-1,:,:]
+    return sort_loss.relu().sum() + diff_loss.relu().sum()
 
 class GaussianAttention(torch.nn.Module):
     def __init__(self, sigmas):

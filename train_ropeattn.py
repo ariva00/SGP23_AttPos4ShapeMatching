@@ -102,6 +102,14 @@ def main(args):
             shape_A = shapes[:args.batch_size // 2, :, :]
             shape_B = shapes[args.batch_size // 2:, :, :]
 
+            if args.normalize:
+                shape_A = shape_A / shape_A.abs().max(dim=1).values.max(dim=1).values.unsqueeze(1).unsqueeze(1).repeat_interleave(shape_A.shape[1], dim=1).repeat_interleave(shape_A.shape[2], dim=2)
+                shape_B = shape_B / shape_B.abs().max(dim=1).values.max(dim=1).values.unsqueeze(1).unsqueeze(1).repeat_interleave(shape_B.shape[1], dim=1).repeat_interleave(shape_B.shape[2], dim=2)
+
+            if args.noise:
+                shape_A = shape_A + ((torch.randn_like(shape_A, device=shape_A.device) - 0.5) * args.noise)
+                shape_B = shape_B + ((torch.randn_like(shape_B, device=shape_B.device) - 0.5) * args.noise)
+
             dim_A = num_points
             permidx_A = torch.randperm(dim_A)
             shape_A = shape_A[:, permidx_A, :]
@@ -119,7 +127,10 @@ def main(args):
             dim_B = dim_A +1
             x = torch.cat((shape_A, sep, shape_B), 1)
 
-            y, hiddens = model(x, return_hiddens=True)
+            if args.condition_self or args.condition_cross:
+                y, hiddens = model(x, return_hiddens=True)
+            else:
+                y = model(x)
             y_shape_A = y[:, dim_B:, :] # shape_B points in shape_A space
             y_shape_B = y[:, :dim_A, :] # shape_A points in shape_B space
 
@@ -131,16 +142,16 @@ def main(args):
 
                 if args.condition_self and args.condition_loss in ("diff", "cos"):
                     if args.condition_fixed:
-                        sigmas_AA = torch.tensor(args.sigmas[:args.condition_self]).to(args.device)
-                        sigmas_BB = torch.tensor(args.sigmas[:args.condition_self]).to(args.device)
+                        sigmas_AA = torch.tensor(args.sigma[:args.condition_self]).to(args.device)
+                        sigmas_BB = torch.tensor(args.sigma[:args.condition_self]).to(args.device)
                     else:
                         sigmas_AA = estimate_sigmas(shape_A, post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A])
                         sigmas_BB = estimate_sigmas(shape_B, post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:])
                 
                 if args.condition_cross and args.condition_loss in ("diff", "cos"):
                     if args.condition_fixed:
-                        sigmas_AB = torch.tensor(args.sigmas[args.condition_self:]).to(args.device)
-                        sigmas_BA = torch.tensor(args.sigmas[args.condition_self:]).to(args.device)
+                        sigmas_AB = torch.tensor(args.sigma[args.condition_self:]).to(args.device)
+                        sigmas_BA = torch.tensor(args.sigma[args.condition_self:]).to(args.device)
                     else:
                         sigmas_AB = estimate_sigmas((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A])
                         sigmas_BA = estimate_sigmas((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:])
@@ -150,14 +161,14 @@ def main(args):
                     if args.condition_self:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A] - gauss_attn(shape_A, sigmas_AA.detach()).softmax(dim=-1)).abs().sum(dim=(1, 2)).mean().reshape(1),
-                            (post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:] - gauss_attn(shape_B, sigmas_BB.detach()).softmax(dim=-1)).abs().sum(dim=(1, 2)).mean().reshape(1)
+                            (post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A] - gauss_attn(shape_A, sigmas_AA.detach()).softmax(dim=-1)).abs().sum().reshape(1),
+                            (post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:] - gauss_attn(shape_B, sigmas_BB.detach()).softmax(dim=-1)).abs().sum().reshape(1)
                         ))
                     if args.condition_cross:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A] - gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)).abs().sum(dim=(1, 2)).mean().reshape(1),
-                            (post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:] - gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)).abs().sum(dim=(1, 2)).mean().reshape(1)
+                            (post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A] - gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)).abs().sum().reshape(1),
+                            (post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:] - gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)).abs().sum().reshape(1)
                         ))
                     attn_loss = attn_loss.nanmean()
                     # attn_loss  = torch.stack((
@@ -197,6 +208,20 @@ def main(args):
                     if args.condition_cross:
                         attn_loss += gauss_loss((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A]).sum()
                         attn_loss += gauss_loss((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:]).sum()
+
+                    # _, indices_AA = torch.cdist(shape_A, shape_A, p=1).sort(dim=1, descending=False)
+                    # _, indices_BB = torch.cdist(shape_B, shape_B, p=1).sort(dim=1, descending=False)
+                    # _, indices_AB = torch.cdist((shape_A[:, gt_A, :])[:, permidx_B, :], (shape_A[:, gt_A, :])[:, permidx_B, :], p=1).sort(dim=1, descending=False)
+                    # _, indices_BA = torch.cdist((shape_B[:, gt_B, :])[:, permidx_A, :], (shape_B[:, gt_B, :])[:, permidx_A, :], p=1).sort(dim=1, descending=False)
+                    # for inter in hiddens.attn_intermediates:
+                    #     ps = inter.post_softmax_attn
+                    #     if args.condition_self:
+                    #         attn_loss += gauss_loss_by_index(ps[:, -args.condition_self:, :dim_A, :dim_A], indices_AA)
+                    #         attn_loss += gauss_loss_by_index(ps[:, -args.condition_self:, dim_B:, dim_B:], indices_BB)
+                    #     if args.condition_cross:
+                    #         attn_loss += gauss_loss_by_index(ps[:, :args.condition_cross, dim_B:, :dim_A], indices_AB)
+                    #         attn_loss += gauss_loss_by_index(ps[:, :args.condition_cross, :dim_A, dim_B:], indices_BA)
+
                     # loss_AA = gauss_loss(shape_A, post_softmax_attn[:, :4, :dim_A, :dim_A]).sum()
                     # loss_BB = gauss_loss(shape_B, post_softmax_attn[:, :4, dim_B:, dim_B:]).sum()
                     # loss_AB = gauss_loss((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, 6:, dim_B:, :dim_A]).sum()
@@ -223,12 +248,13 @@ def main(args):
             # sigmas_BA = sigmas_BA / ((shape_B[:, gt_B, :])[:, permidx_A, :].max(dim=1).values - (shape_B[:, gt_B, :])[:, permidx_A, :].min(dim=1).values).max(dim=1, keepdim=True).values.detach()
             # attn_loss += ((-sigmas_AA.var()) + (-sigmas_BB.var()) + (-sigmas_AB.var()) + (-sigmas_BA.var()))
 
-            # attn_loss -= sigmas_AA.var(dim=1).sum()
-            # attn_loss -= sigmas_BB.var(dim=1).sum()
-            # attn_loss -= sigmas_AB.var(dim=1).sum()
-            # attn_loss -= sigmas_BA.var(dim=1).sum()
 
-            loss += attn_loss
+            if args.condition_self or args.condition_cross:
+                # attn_loss -= sigmas_AA.var(dim=1).sum()
+                # attn_loss -= sigmas_BB.var(dim=1).sum()
+                # attn_loss -= sigmas_AB.var(dim=1).sum()
+                # attn_loss -= sigmas_BA.var(dim=1).sum()
+                loss += attn_loss
 
             if torch.isnan(loss):
                 print("\nNAN LOSS\n")
@@ -313,6 +339,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--save_best", default=False, action="store_true", help="save the model with the best training loss")
 
+    parser.add_argument("--normalize", default=False, action="store_true", help="normalize the input shapes to the range [-1, 1]")
+    parser.add_argument("--noise", type=float, default=0.0, help="add noise to the input shapes")
+
 
     args, _ = parser.parse_known_args()
 
@@ -341,6 +370,9 @@ if __name__ == "__main__":
     if args.condition_mask:
         args.force_cross_attn = args.condition_cross
         args.force_self_attn = args.condition_self
+
+    if args.noise == 0:
+        args.noise = False
 
     if args.device == "auto":
         args.device = (
