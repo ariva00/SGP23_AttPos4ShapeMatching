@@ -18,6 +18,8 @@ matplotlib.use('Agg')  # Must be before importing matplotlib.pyplot or pylab!
 import matplotlib.pyplot as plt
 import seaborn
 
+from point_gaussian import gauss_attn
+
 DEFAULT_DIM_HEAD = 64
 
 Intermediates = namedtuple('Intermediates', [
@@ -791,6 +793,7 @@ class AttentionLayers(nn.Module):
         zero_init_branch_output = False,
         use_linear_attn=False,
         use_gaussian_blocks=False,
+        infer_sigma=False,
         **kwargs
     ):
         super().__init__()
@@ -804,6 +807,7 @@ class AttentionLayers(nn.Module):
         self.dim = dim
         self.depth = depth
         self.layers = nn.ModuleList([])
+        self.dim_head = dim_head
 
         self.has_pos_emb = position_infused_attn or rel_pos_bias or rotary_pos_emb
         self.pia_pos_emb = FixedPositionalEmbedding(dim) if position_infused_attn else None
@@ -813,6 +817,16 @@ class AttentionLayers(nn.Module):
 
         assert not (alibi_pos_bias and rel_pos_bias), 'you can only choose Alibi positional bias or T5 relative positional bias, not both'
         assert rel_pos_num_buckets <= rel_pos_max_distance, 'number of relative position buckets must be less than the relative position max distance'
+
+        self.infer_sigma = infer_sigma
+        if infer_sigma:
+            self.gaussian_heads = gauss_kwargs.get("gaussian_heads")
+            self.sigmas_linear = nn.Sequential(
+                # nn.Linear(dim_head * self.gaussian_heads, dim_head * self.gaussian_heads),
+                # nn.Softplus(),
+                nn.Linear(dim_head * self.gaussian_heads, gauss_kwargs.get("gaussian_heads")),
+                nn.Softplus()
+            )
 
         # relative positional bias
 
@@ -946,8 +960,10 @@ class AttentionLayers(nn.Module):
         return_hiddens = False,
         gaussian_attn = None,
         shape_sep_idx = None,
+        points = None
     ):
         assert not (self.cross_attend ^ exists(context)), 'context must be passed in if cross_attend is set to True'
+        assert (self.infer_sigma and exists(points)) or not self.infer_sigma, 'points must be passed in if infer_sigma is set to True'
 
         hiddens = []
         intermediates = []
@@ -961,6 +977,7 @@ class AttentionLayers(nn.Module):
             max_rotary_emb_length = max(list(map(lambda m: (m.shape[1] if exists(m) else 0) + x.shape[1], mems)))
             rotary_pos_emb = self.rotary_pos_emb(max_rotary_emb_length, x.device)
 
+        first_gaussian = True
         for ind, (layer_type, (norm, block, residual_fn)) in enumerate(zip(self.layer_types, self.layers)):
             is_last = ind == (len(self.layers) - 1)
 
@@ -983,6 +1000,13 @@ class AttentionLayers(nn.Module):
             elif layer_type == 'c':
                 out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn, shape_sep_idx = shape_sep_idx)
             elif layer_type == 'g':
+                if first_gaussian and self.infer_sigma:
+                    first_gaussian = False
+                    gaussian_attn = torch.zeros((points.shape[0], self.gaussian_heads, points.shape[1], points.shape[1]), device=points.device)
+                    sigmas = self.sigmas_linear(x[:, :, -self.gaussian_heads * self.dim_head:])
+                    gaussian_attn[:, :, :shape_sep_idx, :shape_sep_idx] = gauss_attn(points[:, :shape_sep_idx, :], sigmas[:, :shape_sep_idx, :])
+                    gaussian_attn[:, :, shape_sep_idx + 1:, shape_sep_idx + 1:] = gauss_attn(points[:, shape_sep_idx + 1:, :], sigmas[:, shape_sep_idx + 1:, :])
+                    prev_attn[:, -self.gaussian_heads, :, :] = 0
                 out, inter = block(x, mask = mask, attn_mask = attn_mask, sinusoidal_emb = self.pia_pos_emb,
                                        rel_pos = self.rel_pos, rotary_pos_emb = rotary_pos_emb, prev_attn = prev_attn,
                                        mem = layer_mem, gaussian_attn = gaussian_attn, shape_sep_idx = shape_sep_idx)

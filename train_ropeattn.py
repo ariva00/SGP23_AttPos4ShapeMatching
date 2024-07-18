@@ -56,7 +56,8 @@ def main(args):
         inf_gaussian_heads=args.inf_gaussian_heads,
         force_cross_attn=args.force_cross_attn,
         force_self_attn=args.force_self_attn,
-        sigma=args.sigma
+        sigma=args.sigma,
+        infer_sigma=args.infer_sigma
     ).to(args.device)
 
     if args.learn_sigma:
@@ -317,6 +318,7 @@ if __name__ == "__main__":
     parser.add_argument("--no_sep_loss", default=False, action="store_true", help="do not use additional loss term on the separator")
     parser.add_argument("--learn_sigma", default=False, action="store_true", help="learn the sigma of the gaussian attention heads")
     parser.add_argument("--lr_mult", type=float, default=1.0, help="learning rate multiplier for the sigma parameters")
+    parser.add_argument("--infer_sigma", default=False, action="store_true", help="layer output to use to infer the sigma of the subsequent gaussian attention heads")
 
     parser.add_argument("--force_cross_attn", type=int, default=0, help="masks the self attention part of the dot-product attention heads")
     parser.add_argument("--force_self_attn", type=int, default=0, help="masks the self attention part of the dot-product attention heads")
@@ -347,6 +349,8 @@ if __name__ == "__main__":
 
     if args.gaussian_heads == 0:
         args.gaussian_heads = False
+    elif args.infer_sigma:
+        args.sigma = []
     elif len(args.sigma) != args.gaussian_heads:
         while len(args.sigma) < args.gaussian_heads:
             if args.learn_sigma:
@@ -358,7 +362,6 @@ if __name__ == "__main__":
         args.sigma = args.sigma[:args.gaussian_heads]
     if args.force_cross_attn == 0:
         args.force_cross_attn = False
-
     if args.condition_fixed:
         assert len(args.sigma) == args.condition_self + args.condition_cross, "The number of sigmas must match the number of conditioned heads"
 

@@ -10,9 +10,12 @@ def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor) -> torch.Tensor:
     if sigmas.dim() == 1:
         sigmas = sigmas.repeat((x.shape[0], 1))
     dist = torch.cdist(x, x, p=1)
-    dist = dist.unsqueeze(1).repeat((1, sigmas.shape[1], 1, 1))
+    dist = dist.unsqueeze(1).repeat((1, sigmas.shape[-1], 1, 1))
     dist = dist.permute((0, 2, 3, 1))
-    sigmas = sigmas.unsqueeze(1).unsqueeze(1)
+    if sigmas.dim() == 2:
+        sigmas = sigmas.unsqueeze(1)
+    if sigmas.dim() == 3:
+        sigmas = sigmas.unsqueeze(2)
     y = ((-(dist**2)/(2*(sigmas**2))).exp())
     y = y.permute((0, 3, 1, 2))
     return y

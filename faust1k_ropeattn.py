@@ -45,7 +45,8 @@ def main(args):
         inf_gaussian_heads=args.inf_gaussian_heads,
         force_cross_attn=args.force_cross_attn,
         force_self_attn=args.force_self_attn,
-        sigma=args.sigma
+        sigma=args.sigma,
+        infer_sigma=args.infer_sigma
     ).to(args.device)
 
     modelname = args.run_name + ".pt"
@@ -193,6 +194,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--gaussian_heads", type=int, default=0, help="number of gaussian attention heads")
     parser.add_argument("--sigma", type=float, default=[], nargs="*", help="initial sigma for the gaussian attention heads")
+    parser.add_argument("--infer_sigma", default=False, action="store_true", help="layer output to use to infer the sigma of the subsequent gaussian attention heads")
 
     parser.add_argument("--force_cross_attn", type=int, default=0, help="masks the self attention part of the dot-product attention heads")
     parser.add_argument("--force_self_attn", type=int, default=0, help="masks the self attention part of the dot-product attention heads")
@@ -226,6 +228,8 @@ if __name__ == "__main__":
 
     if args.gaussian_heads == 0:
         args.gaussian_heads = False
+    elif args.infer_sigma:
+        args.sigma = []
     elif len(args.sigma) != args.gaussian_heads:
         while len(args.sigma) < args.gaussian_heads:
             if len(args.sigma) > 0:
