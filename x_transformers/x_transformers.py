@@ -29,7 +29,8 @@ Intermediates = namedtuple('Intermediates', [
 
 LayerIntermediates = namedtuple('Intermediates', [
     'hiddens',
-    'attn_intermediates'
+    'attn_intermediates',
+    'sigmas'
 ])
 
 # helpers
@@ -602,8 +603,7 @@ class Attention(nn.Module):
         rotary_pos_emb = None,
         prev_attn = None,
         mem = None,
-        gaussian_attn = None,
-        shape_sep_idx = None
+        gaussian_attn = None
     ):
         b, n, _, h, talking_heads, gaussian_heads, head_scale, scale, device, has_context = *x.shape, self.heads, self.talking_heads, self.gaussian_heads, self.head_scale, self.scale, x.device, exists(context)
         kv_input = default(context, x)
@@ -822,8 +822,8 @@ class AttentionLayers(nn.Module):
         if infer_sigma:
             self.gaussian_heads = gauss_kwargs.get("gaussian_heads")
             self.sigmas_linear = nn.Sequential(
-                # nn.Linear(dim_head * self.gaussian_heads, dim_head * self.gaussian_heads),
-                # nn.Softplus(),
+                nn.Linear(dim_head * self.gaussian_heads, dim_head * self.gaussian_heads),
+                nn.Softplus(),
                 nn.Linear(dim_head * self.gaussian_heads, gauss_kwargs.get("gaussian_heads")),
                 nn.Softplus()
             )
@@ -996,9 +996,9 @@ class AttentionLayers(nn.Module):
             if layer_type == 'a':
                 out, inter = block(x, mask = mask, attn_mask = attn_mask, sinusoidal_emb = self.pia_pos_emb,
                                        rel_pos = self.rel_pos, rotary_pos_emb = rotary_pos_emb, prev_attn = prev_attn,
-                                       mem = layer_mem, shape_sep_idx = shape_sep_idx)
+                                       mem = layer_mem)
             elif layer_type == 'c':
-                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn, shape_sep_idx = shape_sep_idx)
+                out, inter = block(x, context = context, mask = mask, context_mask = context_mask, prev_attn = prev_cross_attn)
             elif layer_type == 'g':
                 if first_gaussian and self.infer_sigma:
                     first_gaussian = False
@@ -1006,10 +1006,13 @@ class AttentionLayers(nn.Module):
                     sigmas = self.sigmas_linear(x[:, :, -self.gaussian_heads * self.dim_head:])
                     gaussian_attn[:, :, :shape_sep_idx, :shape_sep_idx] = gauss_attn(points[:, :shape_sep_idx, :], sigmas[:, :shape_sep_idx, :])
                     gaussian_attn[:, :, shape_sep_idx + 1:, shape_sep_idx + 1:] = gauss_attn(points[:, shape_sep_idx + 1:, :], sigmas[:, shape_sep_idx + 1:, :])
-                    prev_attn[:, -self.gaussian_heads, :, :] = 0
+                    prev_attn_mask = torch.zeros((1, prev_attn.shape[1], 1, 1), device=points.device)
+                    prev_attn_mask[:, -self.gaussian_heads:, :, :] = 1
+                    prev_attn_mask = prev_attn_mask.bool()
+                    prev_attn = prev_attn.masked_fill(prev_attn_mask, 0)
                 out, inter = block(x, mask = mask, attn_mask = attn_mask, sinusoidal_emb = self.pia_pos_emb,
                                        rel_pos = self.rel_pos, rotary_pos_emb = rotary_pos_emb, prev_attn = prev_attn,
-                                       mem = layer_mem, gaussian_attn = gaussian_attn, shape_sep_idx = shape_sep_idx)
+                                       mem = layer_mem, gaussian_attn = gaussian_attn)
             elif layer_type == 'f':
                 out = block(x)
 
@@ -1032,7 +1035,8 @@ class AttentionLayers(nn.Module):
         if return_hiddens:
             intermediates = LayerIntermediates(
                 hiddens = hiddens,
-                attn_intermediates = intermediates
+                attn_intermediates = intermediates,
+                sigmas = sigmas.permute((0, 2, 1)) if self.infer_sigma else None
             )
 
             return x, intermediates
