@@ -108,8 +108,8 @@ def main(args):
                 shape_B = shape_B / shape_B.abs().max(dim=1).values.max(dim=1).values.unsqueeze(1).unsqueeze(1).repeat_interleave(shape_B.shape[1], dim=1).repeat_interleave(shape_B.shape[2], dim=2)
 
             if args.noise:
-                shape_A = shape_A + ((torch.randn_like(shape_A, device=shape_A.device) - 0.5) * args.noise)
-                shape_B = shape_B + ((torch.randn_like(shape_B, device=shape_B.device) - 0.5) * args.noise)
+                shape_A = shape_A + ((torch.randn_like(shape_A, device=shape_A.device)) * args.noise)
+                shape_B = shape_B + ((torch.randn_like(shape_B, device=shape_B.device)) * args.noise)
 
             dim_A = num_points
             permidx_A = torch.randperm(dim_A)
