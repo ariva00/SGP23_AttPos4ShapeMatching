@@ -108,8 +108,10 @@ def main(args):
                 shape_B = shape_B / shape_B.abs().max(dim=1).values.max(dim=1).values.unsqueeze(1).unsqueeze(1).repeat_interleave(shape_B.shape[1], dim=1).repeat_interleave(shape_B.shape[2], dim=2)
 
             if args.noise:
-                shape_A = shape_A + ((torch.randn_like(shape_A, device=shape_A.device)) * args.noise)
-                shape_B = shape_B + ((torch.randn_like(shape_B, device=shape_B.device)) * args.noise)
+                if torch.rand(1).item() < args.noise_p:
+                    shape_A = shape_A + ((torch.randn_like(shape_A, device=shape_A.device)) * args.noise)
+                if torch.rand(1).item() < args.noise_p:
+                    shape_B = shape_B + ((torch.randn_like(shape_B, device=shape_B.device)) * args.noise)
 
             dim_A = num_points
             permidx_A = torch.randperm(dim_A)
@@ -343,6 +345,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--normalize", default=False, action="store_true", help="normalize the input shapes to the range [-1, 1]")
     parser.add_argument("--noise", type=float, default=0.0, help="add noise to the input shapes")
+    parser.add_argument("--noise_p", type=float, default=0.5, help="probability of adding noise to a shape")
 
 
     args, _ = parser.parse_known_args()
