@@ -72,8 +72,8 @@ def main(args):
     optimizer = torch.optim.Adam(params, lr=args.lr)
 
     if args.resume:
-        model.load_state_dict(torch.load(os.path.join(args.path_model, args.run_name + ".pt")))
-        optimizer.load_state_dict(torch.load(os.path.join(args.path_model, "optim." + args.run_name + ".pt")))
+        model.load_state_dict(torch.load(os.path.join(args.path_model, args.run_name + ".pt"), map_location=lambda storage, loc: storage))
+        optimizer.load_state_dict(torch.load(os.path.join(args.path_model, "optim." + args.run_name + ".pt"), map_location=lambda storage, loc: storage))
 
     initial_sigma = model.gauss_attn.sigmas.clone().detach().cpu()
     print("initial sigma: ", initial_sigma)
