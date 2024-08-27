@@ -170,8 +170,8 @@ def main(args):
                     if args.condition_cross:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A] - gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)[:, :, :, permidx_A]).abs().sum().reshape(1),
-                            (post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:] - gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)[:, :, :, permidx_B]).abs().sum().reshape(1)
+                            (post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A] - gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)[:, :, :, gt_B][:, :, :, permidx_A]).abs().sum().reshape(1),
+                            (post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:] - gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)[:, :, :, gt_A][:, :, :, permidx_B]).abs().sum().reshape(1)
                         ))
                     attn_loss = attn_loss.nanmean()
                     # attn_loss  = torch.stack((
@@ -192,8 +192,8 @@ def main(args):
                     if args.condition_cross:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)[:, :, :, permidx_A], dim = 2).sum().reshape(1),
-                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)[:, :, :, permidx_B], dim = 2).sum().reshape(1),
+                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)[:, :, :, gt_B][:, :, :, permidx_A], dim = 2).sum().reshape(1),
+                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)[:, :, :, gt_A][:, :, :, permidx_B], dim = 2).sum().reshape(1),
                         ))
                     attn_loss = attn_loss.mean()
                     # attn_loss = torch.stack((
