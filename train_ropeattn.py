@@ -2,6 +2,7 @@ import os
 import time
 from torch.utils.data import DataLoader
 from transmatching.Data.dataset_smpl import SMPLDataset
+from transmatching.Utils.utils import approximate_geodesic_distances
 import torch
 from tqdm import tqdm
 from argparse import ArgumentParser
@@ -96,7 +97,10 @@ def main(args):
         logger.info(f"starting epoch {epoch}/{args.n_epoch-1}")
         start = time.time()
         epoch_loss = 0
+        geod_dist = None
         for item in tqdm(dataloader_train):
+            if geod_dist is None:
+                geod_dist = torch.tensor(approximate_geodesic_distances(item['y'][0].cpu().numpy(), item['faces'][0].cpu().numpy())).to(args.device)
             optimizer.zero_grad(set_to_none=True)
 
             shapes = item["x"].to(args.device)
@@ -148,30 +152,51 @@ def main(args):
                         sigmas_AA = torch.tensor(args.sigma[:args.condition_self]).to(args.device)
                         sigmas_BB = torch.tensor(args.sigma[:args.condition_self]).to(args.device)
                     else:
-                        sigmas_AA = estimate_sigmas(shape_A, post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A])
-                        sigmas_BB = estimate_sigmas(shape_B, post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:])
+                        if args.geod_dist:
+                            sigmas_AA = estimate_sigmas(shape_A, post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A], geod_dist[permidx_A, :][:, permidx_A])
+                            sigmas_BB = estimate_sigmas(shape_B, post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:], geod_dist[permidx_B, :][:, permidx_B])
+                        else:
+                            sigmas_AA = estimate_sigmas(shape_A, post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A])
+                            sigmas_BB = estimate_sigmas(shape_B, post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:])
+
+                    if args.geod_dist:
+                        attn_AA = gauss_attn(shape_A, sigmas_AA.detach(), geod_dist[permidx_A, :][:, permidx_A])
+                        attn_BB = gauss_attn(shape_B, sigmas_BB.detach(), geod_dist[permidx_B, :][:, permidx_B])
+                    else:
+                        attn_AA = gauss_attn(shape_A, sigmas_AA.detach())
+                        attn_BB = gauss_attn(shape_B, sigmas_BB.detach())
                 
                 if args.condition_cross and args.condition_loss in ("diff", "cos"):
                     if args.condition_fixed:
                         sigmas_AB = torch.tensor(args.sigma[args.condition_self:]).to(args.device)
                         sigmas_BA = torch.tensor(args.sigma[args.condition_self:]).to(args.device)
                     else:
-                        sigmas_AB = estimate_sigmas((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A])
-                        sigmas_BA = estimate_sigmas((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:])
+                        if args.geod_dist:
+                            sigmas_AB = estimate_sigmas((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], geod_dist[permidx_B, :][:, permidx_B])
+                            sigmas_BA = estimate_sigmas((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], geod_dist[permidx_A, :][:, permidx_A])
+                        else:
+                            sigmas_AB = estimate_sigmas((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A])
+                            sigmas_BA = estimate_sigmas((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:])
 
+                    if args.geod_dist:
+                        attn_AB = gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach(), geod_dist[permidx_B, :][:, permidx_B])[:, :, :, gt_B][:, :, :, permidx_A]
+                        attn_BA = gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach(), geod_dist[permidx_A, :][:, permidx_A])[:, :, :, gt_A][:, :, :, permidx_B]
+                    else:
+                        attn_AB = gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach())[:, :, :, gt_B][:, :, :, permidx_A]
+                        attn_BA = gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach())[:, :, :, gt_A][:, :, :, permidx_B]
                 if args.condition_loss == "diff":
                     attn_loss = torch.empty(0, device=args.device)
                     if args.condition_self:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A] - gauss_attn(shape_A, sigmas_AA.detach()).softmax(dim=-1)).abs().sum().reshape(1),
-                            (post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:] - gauss_attn(shape_B, sigmas_BB.detach()).softmax(dim=-1)).abs().sum().reshape(1)
+                            (post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A] - attn_AA.softmax(dim=-1)).abs().sum().reshape(1),
+                            (post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:] - attn_BB.softmax(dim=-1)).abs().sum().reshape(1)
                         ))
                     if args.condition_cross:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A] - gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)[:, :, :, gt_B][:, :, :, permidx_A]).abs().sum().reshape(1),
-                            (post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:] - gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)[:, :, :, gt_A][:, :, :, permidx_B]).abs().sum().reshape(1)
+                            (post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A] - attn_AB.softmax(dim=-1)).abs().sum().reshape(1),
+                            (post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:] - attn_BA.softmax(dim=-1)).abs().sum().reshape(1)
                         ))
                     attn_loss = attn_loss.nanmean()
                     # attn_loss  = torch.stack((
@@ -186,14 +211,14 @@ def main(args):
                     if args.condition_self:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn.shape[0] * args.condition_self * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A], gauss_attn(shape_A, sigmas_AA.detach()).softmax(dim=-1), dim = 2).sum().reshape(1),
-                            (post_softmax_attn.shape[0] * args.condition_self * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:], gauss_attn(shape_B, sigmas_BB.detach()).softmax(dim=-1), dim = 2).sum().reshape(1),
+                            (post_softmax_attn.shape[0] * args.condition_self * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A], attn_AA.softmax(dim=-1), dim = 2).sum().reshape(1),
+                            (post_softmax_attn.shape[0] * args.condition_self * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:], attn_BB.softmax(dim=-1), dim = 2).sum().reshape(1),
                         ))
                     if args.condition_cross:
                         attn_loss = torch.cat((
                             attn_loss,
-                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach()).softmax(dim=-1)[:, :, :, gt_B][:, :, :, permidx_A], dim = 2).sum().reshape(1),
-                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach()).softmax(dim=-1)[:, :, :, gt_A][:, :, :, permidx_B], dim = 2).sum().reshape(1),
+                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], attn_AB.softmax(dim=-1), dim = 2).sum().reshape(1),
+                            (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], attn_BA.softmax(dim=-1), dim = 2).sum().reshape(1),
                         ))
                     attn_loss = attn_loss.mean()
                     # attn_loss = torch.stack((
@@ -346,6 +371,8 @@ if __name__ == "__main__":
     parser.add_argument("--normalize", default=False, action="store_true", help="normalize the input shapes to the range [-1, 1]")
     parser.add_argument("--noise", type=float, default=0.0, help="add noise to the input shapes")
     parser.add_argument("--noise_p", type=float, default=0.5, help="probability of adding noise to a shape")
+
+    parser.add_argument("--geod_dist", default=False, action="store_true", help="use geodesic distances to condition via loss")
 
 
     args, _ = parser.parse_known_args()

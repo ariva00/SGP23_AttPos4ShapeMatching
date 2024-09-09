@@ -2,14 +2,20 @@ import torch
 import trimesh
 import numpy as np
 
-def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma) -> torch.Tensor:
-    dist = torch.cdist(x, y, p=1)
+def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma, dist:torch.Tensor = None) -> torch.Tensor:
+    if dist is None:
+        dist = torch.cdist(x, y, p=1)
+    if dist.dim() == 2:
+        dist = dist.unsqueeze(0).repeat_interleave(x.shape[0], dim=0)
     return ((-(dist**2)/(2*(sigma**2))).exp())
 
-def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor) -> torch.Tensor:
+def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor, dist:torch.Tensor=None) -> torch.Tensor:
     if sigmas.dim() == 1:
         sigmas = sigmas.repeat((x.shape[0], 1))
-    dist = torch.cdist(x, x, p=1)
+    if dist is None:
+        dist = torch.cdist(x, x, p=1)
+    if dist.dim() == 2:
+        dist = dist.unsqueeze(0).repeat_interleave(x.shape[0], dim=0)
     dist = dist.unsqueeze(1).repeat((1, sigmas.shape[-1], 1, 1))
     dist = dist.permute((0, 2, 3, 1))
     if sigmas.dim() == 2:
@@ -20,8 +26,11 @@ def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor) -> torch.Tensor:
     y = y.permute((0, 3, 1, 2))
     return y
 
-def estimate_sigmas(x:torch.Tensor, attn:torch.Tensor) -> torch.Tensor:
-    dist = torch.cdist(x, x, p=1)
+def estimate_sigmas(x:torch.Tensor, attn:torch.Tensor, dist:torch.Tensor = None) -> torch.Tensor:
+    if dist is None:
+        dist = torch.cdist(x, x, p=1)
+    if dist.dim() == 2:
+        dist = dist.unsqueeze(0).repeat_interleave(x.shape[0], dim=0)
     dist = dist.unsqueeze(1).repeat((1, attn.shape[1], 1, 1))
     dist = dist.permute((0, 2, 3, 1))
     attn = attn.permute((0, 2, 3, 1))

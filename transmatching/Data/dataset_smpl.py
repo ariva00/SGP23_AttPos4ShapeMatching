@@ -18,6 +18,8 @@ class SMPLDataset(Dataset):
         self.test_data = torch.from_numpy(np.load(os.path.join(self.in_path, '12k_shapes_test.npy'))).float()
         self.reference = torch.from_numpy(trimesh.load_mesh((os.path.join(self.in_path, '12ktemplate.ply')),
                                                             process=False).vertices).float()
+        self.faces = torch.from_numpy(trimesh.load_mesh((os.path.join(self.in_path, '12ktemplate.ply')),
+                                                            process=False).faces).int()
 
     def __len__(self):
         if self.train:
@@ -51,7 +53,7 @@ class SMPLDataset(Dataset):
             shape = shape - torch.mean(shape, dim=(-2))
             ref = self.reference - torch.mean(self.reference, dim=-2)
         
-        return {'x': shape, 'y': ref}
+        return {'x': shape, 'y': ref, 'faces': self.faces}
 
 
 if __name__ == '__main__':
