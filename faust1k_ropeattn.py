@@ -207,7 +207,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--device", default="auto", help="device to use for training, auto will use cuda if available, mps if available, else cpu")
 
-    parser.add_argument("--mask_head", type=int, default=-1, help="masks the attention head at the specified index")
+    parser.add_argument("--mask_head", type=int, default=[], nargs="*", help="masks the attention heads at the specified indices")
 
     parser.add_argument("--no_rescale", default=False, action="store_true", help="do not rescale the shapes")
     parser.add_argument("--gauss_dataset", default=None, help="name of the dataset to use for the gaussian attention euclidean distances (if different from the main dataset)")

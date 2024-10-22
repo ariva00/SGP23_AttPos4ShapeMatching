@@ -234,8 +234,8 @@ def main(args):
                         attn_loss += gauss_loss(shape_A, post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A]).sum()
                         attn_loss += gauss_loss(shape_B, post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:]).sum()
                     if args.condition_cross:
-                        attn_loss += gauss_loss((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A]).sum()
-                        attn_loss += gauss_loss((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:]).sum()
+                        attn_loss += gauss_loss((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A][:,:,:, gt_A][:,:,:, permidx_B]).sum()
+                        attn_loss += gauss_loss((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:][:,:,:, gt_B][:,:,:, permidx_A]).sum()
 
                     # _, indices_AA = torch.cdist(shape_A, shape_A, p=1).sort(dim=1, descending=False)
                     # _, indices_BB = torch.cdist(shape_B, shape_B, p=1).sort(dim=1, descending=False)
@@ -277,7 +277,18 @@ def main(args):
             # attn_loss += ((-sigmas_AA.var()) + (-sigmas_BB.var()) + (-sigmas_AB.var()) + (-sigmas_BA.var()))
 
 
+            # post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A]
+            # post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:]
+
             if args.condition_self or args.condition_cross:
+                if args.condition_self and args.condition_fds:
+                    attn_loss += cross_heads_loss(post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A])
+                    attn_loss += cross_heads_loss(post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:])
+                
+                if args.condition_cross and args.condition_fds:
+                    attn_loss += cross_heads_loss(post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A])
+                    attn_loss += cross_heads_loss(post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:])
+                
                 # attn_loss -= sigmas_AA.var(dim=1).sum()
                 # attn_loss -= sigmas_BB.var(dim=1).sum()
                 # attn_loss -= sigmas_AB.var(dim=1).sum()
@@ -320,7 +331,8 @@ def main(args):
 # END TRAINING -----------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------------------------------
 
-
+def cross_heads_loss(attn:torch.Tensor):
+    return (-(attn - attn.roll(1, 1)).abs()).exp().mean(dim=2).sum()
 
 if __name__ == "__main__":
 
@@ -358,6 +370,7 @@ if __name__ == "__main__":
     parser.add_argument("--condition_layer", type=int, default=5, help="layer to condition the attention weights")
     parser.add_argument("--condition_fixed", default=False, action="store_true", help="use fixed sigmas for conditioning, the conditioning is not learned. If True, the sigmas are the ones in the sigma argument from the self ones to the cross ones in order, if False, the sigmas are estimated from the attention weights")
     parser.add_argument("--condition_mask", default=False, action="store_true", help="mask the conditioned heads to only condition the correct diagonals of the attention matrices")
+    parser.add_argument("--condition_fds", default=False, action="store_true", help="condition the heads to produce different sigmas")
 
     parser.add_argument("--device", default="auto", help="device to use for training, auto will use cuda if available, mps if available, else cpu")
 

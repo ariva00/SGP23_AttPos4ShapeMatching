@@ -73,7 +73,7 @@ class EncoderPointTransfomer(nn.Module):
             nn.Linear(16, 3)
         )
     
-    def forward(self, x:torch.Tensor, sep_idx=None, mask_head=-1, return_hiddens=False):
+    def forward(self, x:torch.Tensor, sep_idx=None, mask_head=[], return_hiddens=False):
         if sep_idx is None:
             sep_idx = x.shape[1] // 2
         dim1 = sep_idx
@@ -87,7 +87,7 @@ class EncoderPointTransfomer(nn.Module):
         points = x if self.infer_sigma else None
 
         x = self.linear_in(x)
-        attn_mask = torch.ones((8, x.shape[1], x.shape[1]), device=x.device) if self.force_cross_attn or self.force_self_attn or mask_head > -1 else None
+        attn_mask = torch.ones((8, x.shape[1], x.shape[1]), device=x.device) if self.force_cross_attn or self.force_self_attn or mask_head else None
         fixed_attn = torch.zeros((x.shape[0], self.gaussian_heads + self.inf_gaussian_heads, x.shape[1], x.shape[1]), device=x.device) if (self.gaussian_heads or self.inf_gaussian_heads) and not self.infer_sigma else None
         if (self.gaussian_heads or self.inf_gaussian_heads) and not self.infer_sigma:
             if self.gaussian_heads:
@@ -104,7 +104,7 @@ class EncoderPointTransfomer(nn.Module):
             attn_mask[:self.force_cross_attn, :dim1, :dim1] = 0
             attn_mask[:self.force_cross_attn, dim2:, dim2:] = 0
 
-        if mask_head > -1:
+        if mask_head:
             attn_mask[mask_head, :, :] = 0
 
         if attn_mask is not None:

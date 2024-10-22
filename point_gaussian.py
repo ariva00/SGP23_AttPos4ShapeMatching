@@ -10,6 +10,8 @@ def point_gauss(x:torch.Tensor, y:torch.Tensor, sigma, dist:torch.Tensor = None)
     return ((-(dist**2)/(2*(sigma**2))).exp())
 
 def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor, dist:torch.Tensor=None) -> torch.Tensor:
+    if x.dim() == 2:
+        x = x.unsqueeze(0)
     if sigmas.dim() == 1:
         sigmas = sigmas.repeat((x.shape[0], 1))
     if dist is None:
@@ -27,6 +29,8 @@ def gauss_attn(x:torch.Tensor, sigmas:torch.Tensor, dist:torch.Tensor=None) -> t
     return y
 
 def estimate_sigmas(x:torch.Tensor, attn:torch.Tensor, dist:torch.Tensor = None) -> torch.Tensor:
+    if x.dim() == 2:
+        x = x.unsqueeze(0)
     if dist is None:
         dist = torch.cdist(x, x, p=1)
     if dist.dim() == 2:
