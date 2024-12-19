@@ -3,12 +3,13 @@ from tqdm import tqdm
 from argparse import ArgumentParser
 from transmatching.Utils.utils import  get_errors, chamfer_loss, area_weighted_normalization, approximate_geodesic_distances
 import numpy as np
-from scipy.io import loadmat
 import os
 import random
 import numpy
-from transmatching.Utils.utils import RandomRotateCustomAllAxis
 from model import EncoderPointTransfomer
+from datasets import FaustDataset
+import torchvision.transforms as transforms
+from shape_transforms import NormalizeShape, RandomRotateOneOrAllAxis
 
 def set_seed(seed):
     random.seed(seed)
@@ -28,14 +29,20 @@ def main(args):
         else:
             custom_layers += ('a', 'f')
 
-    faust = loadmat(os.path.join(args.path_data, args.dataset + ".mat"))
-    shapes = faust["vertices"]
-    faces = faust["f"] - 1
-    n = shapes.shape[0]
+    dataset = FaustDataset(args.path_data, args.dataset)
+
+    transform = []
+    if args.normalize:
+        transform.append(NormalizeShape())
+    if args.random_rotation:
+        transform.append(RandomRotateOneOrAllAxis(360))
+
+    transform = transforms.Compose(transform)
+
+    n = len(dataset)
 
     if args.gauss_dataset:
-        gauss_faust = loadmat(os.path.join(args.path_data, args.gauss_dataset + ".mat"))
-        gauss_shapes = gauss_faust["vertices"]
+        gauss_dataset = FaustDataset(args.path_data, args.gauss_dataset)
 
     model = EncoderPointTransfomer(
         heads=args.n_heads,
@@ -97,22 +104,18 @@ def main(args):
 
             couples.append((shape_A_idx, shape_B_idx))
 
-            shape_A = torch.from_numpy(shapes[shape_A_idx])
-            shape_B = torch.from_numpy(shapes[shape_B_idx])
+            shape_A = dataset[shape_A_idx]['x']
+            shape_B = dataset[shape_B_idx]['x']
+            faces = dataset[shape_A_idx]['faces']
 
-            if args.normalize:
-                shape_A = shape_A / shape_A.abs().max(dim=0).values.max(dim=0).values.unsqueeze(0).unsqueeze(0).repeat_interleave(shape_A.shape[0], dim=0).repeat_interleave(shape_A.shape[1], dim=1)
-                shape_B = shape_B / shape_B.abs().max(dim=0).values.max(dim=0).values.unsqueeze(0).unsqueeze(0).repeat_interleave(shape_B.shape[0], dim=0).repeat_interleave(shape_B.shape[1], dim=1)
-
-            if args.random_rotation:
-                shape_A = RandomRotateCustomAllAxis(shape_A, 360)
-                shape_B = RandomRotateCustomAllAxis(shape_B, 360)
+            shape_A = transform(shape_A)
+            shape_B = transform(shape_B)
 
             if args.gauss_dataset:
-                gauss_shape_A = torch.from_numpy(gauss_shapes[shape_A_idx])
-                gauss_shape_B = torch.from_numpy(gauss_shapes[shape_B_idx])
+                gauss_shape_A = gauss_dataset[shape_A_idx]['x']
+                gauss_shape_B = gauss_dataset[shape_B_idx]['x']
 
-            geod = approximate_geodesic_distances(shape_B, faces.astype("int"))
+            geod = approximate_geodesic_distances(shape_B, faces.numpy())
             geod /= np.max(geod)
 
             points_A = area_weighted_normalization(shape_A, rescale=not args.no_rescale).to(args.device)

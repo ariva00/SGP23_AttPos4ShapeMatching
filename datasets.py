@@ -38,12 +38,11 @@ class SMPLDataset(Dataset):
 
 class FaustDataset(Dataset):
 
-    def __init__(self, in_path, dataset="FAUSTS_rem", area=True, transform=None):
+    def __init__(self, in_path, dataset="FAUSTS_rem", transform=None):
         self.in_path = in_path
-        self.area = area
-        self.mat = loadmat(self.in_path + dataset + ".mat")
-        self.data = torch.from_numpy(self.mat["vertices"]).float()
-        self.faces = torch.from_numpy(self.mat["f"]).int() - 1
+        mat = loadmat(self.in_path + dataset + ".mat")
+        self.data = torch.from_numpy(mat["vertices"]).float()
+        self.faces = torch.from_numpy(mat["f"].astype(int)).int() - 1
         self.transform = transform
 
     def __len__(self):
@@ -51,13 +50,6 @@ class FaustDataset(Dataset):
 
     def __getitem__(self, index):
         shape = self.data[index]
-        shape = shape * 0.7535
-
-        if self.area:
-            A = est_area(shape[None,...])[0]
-            shape = shape - (shape*(A/A.sum(-1,keepdims=True))[...,None]).sum(-2,keepdims=True)
-        else:
-            shape = shape - torch.mean(shape, dim=(-2))
 
         if self.transform:
             shape = self.transform(shape)
