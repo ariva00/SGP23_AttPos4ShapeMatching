@@ -11,7 +11,7 @@ from einops.layers.torch import Rearrange
 
 from entmax import entmax15
 
-from x_transformers.autoregressive_wrapper import AutoregressiveWrapper
+from gaussian_x_transformers.autoregressive_wrapper import AutoregressiveWrapper
 
 import matplotlib
 matplotlib.use('Agg')  # Must be before importing matplotlib.pyplot or pylab!

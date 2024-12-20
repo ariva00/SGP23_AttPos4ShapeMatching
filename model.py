@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from x_transformers import Encoder
+from gaussian_x_transformers import Encoder
 from point_gaussian import GaussianAttention
 
 
