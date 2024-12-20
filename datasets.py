@@ -4,7 +4,7 @@ import torch
 import trimesh
 from torch.utils.data import Dataset
 from scipy.io import loadmat
-from transmatching.Utils.utils import est_area
+from utils import est_area
 
 # Original transmatching repository https://github.com/GiovanniTRA/transmatching
 # The orignial code is distributed under the MIT license reported in the license folder

@@ -2,7 +2,7 @@ import os
 import time
 from torch.utils.data import DataLoader
 from datasets import SMPLDataset
-from transmatching.Utils.utils import approximate_geodesic_distances, get_errors, chamfer_loss
+from utils import approximate_geodesic_distances, get_errors, chamfer_loss
 import torch
 from tqdm import tqdm
 from argparse import ArgumentParser
@@ -12,7 +12,7 @@ import random
 import numpy
 import logging
 import torchvision.transforms as transforms
-from shape_transforms import RandomRotateOneOrAllAxis, NormalizeShapeAreaWeighted, CenterShape, RescaleShape, NormalizeShape, GaussianNoise
+from shape_transforms import RandomRotateOneOrAllAxis, NormalizeShapeAreaWeighted, NormalizeShape, GaussianNoise
 from model import EncoderPointTransfomer
 from point_gaussian import gauss_attn, estimate_sigmas, gauss_loss
 

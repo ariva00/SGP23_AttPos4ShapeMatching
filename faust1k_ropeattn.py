@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 from argparse import ArgumentParser
-from transmatching.Utils.utils import  get_errors, chamfer_loss, area_weighted_normalization, approximate_geodesic_distances
+from utils import  get_errors, chamfer_loss, approximate_geodesic_distances
 import numpy as np
 import os
 import random
@@ -9,7 +9,7 @@ import numpy
 from model import EncoderPointTransfomer
 from datasets import FaustDataset
 import torchvision.transforms as transforms
-from shape_transforms import NormalizeShape, RandomRotateOneOrAllAxis
+from shape_transforms import NormalizeShape, RandomRotateOneOrAllAxis, NormalizeShapeAreaWeighted, RescaleShape
 
 def set_seed(seed):
     random.seed(seed)
@@ -36,6 +36,15 @@ def main(args):
         transform.append(NormalizeShape())
     if args.random_rotation:
         transform.append(RandomRotateOneOrAllAxis(360))
+
+    gauss_transform = transform.copy()
+
+    if not args.no_rescale:
+        transform.append(RescaleShape(0.741))
+    if not args.gauss_no_rescale:
+        gauss_transform.append(RescaleShape(0.741))
+    transform.append(NormalizeShapeAreaWeighted())
+    gauss_transform.append(NormalizeShapeAreaWeighted())
 
     transform = transforms.Compose(transform)
 
@@ -108,46 +117,45 @@ def main(args):
             shape_B = dataset[shape_B_idx]['x']
             faces = dataset[shape_A_idx]['faces']
 
+            geod = approximate_geodesic_distances(shape_B.numpy(), faces.numpy())
+            geod /= np.max(geod)
+
+            shape_A = shape_A.to(args.device)
+            shape_B = shape_B.to(args.device)
+
             shape_A = transform(shape_A)
             shape_B = transform(shape_B)
 
             if args.gauss_dataset:
-                gauss_shape_A = gauss_dataset[shape_A_idx]['x']
-                gauss_shape_B = gauss_dataset[shape_B_idx]['x']
+                gauss_shape_A = gauss_dataset[shape_A_idx]['x'].to(args.device)
+                gauss_shape_B = gauss_dataset[shape_B_idx]['x'].to(args.device)
 
-            geod = approximate_geodesic_distances(shape_B, faces.numpy())
-            geod /= np.max(geod)
+                gauss_shape_A = gauss_transform(gauss_shape_A)
+                gauss_shape_B = gauss_transform(gauss_shape_B)
 
-            points_A = area_weighted_normalization(shape_A, rescale=not args.no_rescale).to(args.device)
-            points_B = area_weighted_normalization(shape_B, rescale=not args.no_rescale).to(args.device)
+            sep = -torch.ones(shape_B.unsqueeze(0).size()[0], 1, 3).to(args.device)
 
-            if args.gauss_dataset:
-                gauss_points_A = area_weighted_normalization(gauss_shape_A, rescale=not args.gauss_no_rescale).to(args.device)
-                gauss_points_B = area_weighted_normalization(gauss_shape_B, rescale=not args.gauss_no_rescale).to(args.device)
-
-            sep = -torch.ones(points_B.unsqueeze(0).size()[0], 1, 3).to(args.device)
-
-            dim_A = points_A.unsqueeze(0).shape[1]
-            dim_B = points_B.unsqueeze(0).shape[1]
+            dim_A = shape_A.unsqueeze(0).shape[1]
+            dim_B = shape_A.unsqueeze(0).shape[1]
 
             if args.random_permutation:
                 permidx_A = torch.randperm(dim_A)
-                points_A = points_A[permidx_A, :]
+                shape_A = shape_A[permidx_A, :]
                 gt_A = torch.zeros_like(permidx_A)
                 gt_A[permidx_A] = torch.arange(dim_A)
 
                 permidx_B = torch.randperm(dim_B)
-                points_B = points_B[permidx_B, :]
+                shape_B = shape_B[permidx_B, :]
                 gt_B = torch.zeros_like(permidx_B)
                 gt_B[permidx_B] = torch.arange(dim_B)
 
                 if args.gauss_dataset:
-                    gauss_points_A = gauss_points_A[permidx_A, :]
-                    gauss_points_B = gauss_points_B[permidx_B, :]
+                    gauss_shape_A = gauss_shape_A[permidx_A, :]
+                    gauss_shape_B = gauss_shape_B[permidx_B, :]
 
             dim_B = dim_A + 1
 
-            x = torch.cat((points_A.unsqueeze(0).float(), sep, points_B.unsqueeze(0).float()), 1)
+            x = torch.cat((shape_A.unsqueeze(0).float(), sep, shape_B.unsqueeze(0).float()), 1)
 
             y = model(x, mask_head=args.mask_head)
             y_shape_A = y[:, dim_B:, :] # shape_B points in shape_A space
@@ -156,19 +164,19 @@ def main(args):
             if args.random_permutation:
                 y_shape_A = y_shape_A[:, gt_B, :]
                 y_shape_B = y_shape_B[:, gt_A, :]
-                points_B = points_B[gt_B, :]
-                points_A = points_A[gt_A, :]
+                shape_B = shape_B[gt_B, :]
+                shape_A = shape_A[gt_A, :]
 
-            d_A = chamfer_loss(points_A.float(), y_shape_A).to(args.device)
-            d_B = chamfer_loss(points_B.float(), y_shape_B).to(args.device)
+            d_A = chamfer_loss(shape_A.float(), y_shape_A).to(args.device)
+            d_B = chamfer_loss(shape_B.float(), y_shape_B).to(args.device)
 
             if d_A < d_B:
-                d = torch.cdist(points_A.float(), y_shape_A).squeeze(0).to(args.device)
+                d = torch.cdist(shape_A.float(), y_shape_A).squeeze(0).to(args.device)
                 ne = get_errors(d, geod)
                 err_couple.append(np.sum(ne))
                 err.append(ne)
             else:
-                d = torch.cdist(points_B.float(), y_shape_B).squeeze(0).to(args.device)
+                d = torch.cdist(shape_B.float(), y_shape_B).squeeze(0).to(args.device)
                 ne = get_errors(d.transpose(1, 0), geod)
                 err_couple.append(np.sum(ne))
                 err.append(ne)
