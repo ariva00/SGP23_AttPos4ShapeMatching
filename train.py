@@ -212,42 +212,40 @@ def train(model, dataloader, optimizer, num_points, args):
             post_softmax_attn = hiddens.attn_intermediates[args.condition_layer].post_softmax_attn
 
             if args.condition_self and args.condition_loss in ("diff", "cos"):
-                if args.condition_fixed:
-                    sigmas_AA = torch.tensor(args.sigma[:args.condition_self]).to(args.device)
-                    sigmas_BB = torch.tensor(args.sigma[:args.condition_self]).to(args.device)
-                else:
-                    if args.geod_dist:
-                        sigmas_AA = estimate_sigmas(shape_A, post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A], geod_dist[permidx_A, :][:, permidx_A])
-                        sigmas_BB = estimate_sigmas(shape_B, post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:], geod_dist[permidx_B, :][:, permidx_B])
-                    else:
-                        sigmas_AA = estimate_sigmas(shape_A, post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A])
-                        sigmas_BB = estimate_sigmas(shape_B, post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:])
+                attn_AA = get_target_attn(
+                    shape_A[:, gt_A, :],
+                    post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A],
+                    geod_dist=geod_dist if args.geod_dist else None,
+                    permidx=permidx_A,
+                    sigmas=torch.tensor(args.sigma[:args.condition_self]).to(args.device) if args.condition_fixed else None
+                )
+                attn_BB = get_target_attn(
+                    shape_B[:, gt_B, :],
+                    post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:],
+                    geod_dist=geod_dist if args.geod_dist else None,
+                    permidx=permidx_B,
+                    sigmas=torch.tensor(args.sigma[:args.condition_self]).to(args.device) if args.condition_fixed else None
+                )
 
-                if args.geod_dist:
-                    attn_AA = gauss_attn(shape_A, sigmas_AA.detach(), geod_dist[permidx_A, :][:, permidx_A])
-                    attn_BB = gauss_attn(shape_B, sigmas_BB.detach(), geod_dist[permidx_B, :][:, permidx_B])
-                else:
-                    attn_AA = gauss_attn(shape_A, sigmas_AA.detach())
-                    attn_BB = gauss_attn(shape_B, sigmas_BB.detach())
-            
             if args.condition_cross and args.condition_loss in ("diff", "cos"):
-                if args.condition_fixed:
-                    sigmas_AB = torch.tensor(args.sigma[args.condition_self:]).to(args.device)
-                    sigmas_BA = torch.tensor(args.sigma[args.condition_self:]).to(args.device)
-                else:
-                    if args.geod_dist:
-                        sigmas_AB = estimate_sigmas((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], geod_dist[permidx_B, :][:, permidx_B])
-                        sigmas_BA = estimate_sigmas((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], geod_dist[permidx_A, :][:, permidx_A])
-                    else:
-                        sigmas_AB = estimate_sigmas((shape_A[:, gt_A, :])[:, permidx_B, :], post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A])
-                        sigmas_BA = estimate_sigmas((shape_B[:, gt_B, :])[:, permidx_A, :], post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:])
+                attn_AB = get_target_attn(
+                    shape_A[:, gt_A, :],
+                    post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A],
+                    geod_dist=geod_dist if args.geod_dist else None,
+                    permidx=permidx_B,
+                    sigmas=torch.tensor(args.sigma[args.condition_self:args.condition_self + args.condition_cross]).to(args.device) if args.condition_fixed else None
+                )
+                attn_BA = get_target_attn(
+                    shape_B[:, gt_B, :],
+                    post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:],
+                    geod_dist=geod_dist if args.geod_dist else None,
+                    permidx=permidx_A,
+                    sigmas=torch.tensor(args.sigma[args.condition_self:args.condition_self + args.condition_cross]).to(args.device) if args.condition_fixed else None
+                )
 
-                if args.geod_dist:
-                    attn_AB = gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach(), geod_dist[permidx_B, :][:, permidx_B])[:, :, :, gt_B][:, :, :, permidx_A]
-                    attn_BA = gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach(), geod_dist[permidx_A, :][:, permidx_A])[:, :, :, gt_A][:, :, :, permidx_B]
-                else:
-                    attn_AB = gauss_attn((shape_A[:, gt_A, :])[:, permidx_B, :], sigmas_AB.detach())[:, :, :, gt_B][:, :, :, permidx_A]
-                    attn_BA = gauss_attn((shape_B[:, gt_B, :])[:, permidx_A, :], sigmas_BA.detach())[:, :, :, gt_A][:, :, :, permidx_B]
+                attn_AB = attn_AB[:, :, :, gt_B][:, :, :, permidx_A]
+                attn_BA = attn_BA[:, :, :, gt_A][:, :, :, permidx_B]
+
             if args.condition_loss == "diff":
                 attn_loss = torch.empty(0, device=args.device)
                 if args.condition_self:
@@ -364,6 +362,20 @@ def test(model, dataloader, args):
 
 def cross_heads_loss(attn:torch.Tensor):
     return (-(attn - attn.roll(1, 1)).abs()).exp().mean(dim=2).sum()
+
+def get_target_attn(shape, post_softmax_attn, geod_dist=None, permidx=None, sigmas=None):
+    if sigmas is None:
+        if geod_dist:
+            sigmas = estimate_sigmas(shape[:, permidx, :], post_softmax_attn, geod_dist[permidx, :][:, permidx])
+        else:
+            sigmas = estimate_sigmas(shape[:, permidx, :], post_softmax_attn)
+
+    if geod_dist:
+        attn = gauss_attn(shape[:, permidx, :], sigmas.detach(), geod_dist[permidx, :][:, permidx])
+    else:
+        attn = gauss_attn(shape[:, permidx, :], sigmas.detach())
+
+    return attn
 
 if __name__ == "__main__":
 
