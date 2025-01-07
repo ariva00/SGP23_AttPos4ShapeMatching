@@ -211,72 +211,59 @@ def train(model, dataloader, optimizer, num_points, args):
         if args.condition_self or args.condition_cross:
             post_softmax_attn = hiddens.attn_intermediates[args.condition_layer].post_softmax_attn
 
-            if args.condition_self and args.condition_loss in ("diff", "cos"):
-                attn_AA = get_target_attn(
-                    shape_A[:, gt_A, :],
-                    post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A],
-                    geod_dist=geod_dist if args.geod_dist else None,
-                    permidx=permidx_A,
-                    sigmas=torch.tensor(args.sigma[:args.condition_self]).to(args.device) if args.condition_fixed else None
-                )
-                attn_BB = get_target_attn(
-                    shape_B[:, gt_B, :],
-                    post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:],
-                    geod_dist=geod_dist if args.geod_dist else None,
-                    permidx=permidx_B,
-                    sigmas=torch.tensor(args.sigma[:args.condition_self]).to(args.device) if args.condition_fixed else None
-                )
-
-            if args.condition_cross and args.condition_loss in ("diff", "cos"):
-                attn_AB = get_target_attn(
-                    shape_A[:, gt_A, :],
-                    post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A],
-                    geod_dist=geod_dist if args.geod_dist else None,
-                    permidx=permidx_B,
-                    sigmas=torch.tensor(args.sigma[args.condition_self:args.condition_self + args.condition_cross]).to(args.device) if args.condition_fixed else None
-                )
-                attn_BA = get_target_attn(
-                    shape_B[:, gt_B, :],
-                    post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:],
-                    geod_dist=geod_dist if args.geod_dist else None,
-                    permidx=permidx_A,
-                    sigmas=torch.tensor(args.sigma[args.condition_self:args.condition_self + args.condition_cross]).to(args.device) if args.condition_fixed else None
-                )
-
-                attn_AB = attn_AB[:, :, :, gt_B][:, :, :, permidx_A]
-                attn_BA = attn_BA[:, :, :, gt_A][:, :, :, permidx_B]
-
-            if args.condition_loss == "diff":
+            if args.condition_loss in ("diff", "cos"):
+                loss_function = diff_loss if args.condition_loss == "diff" else cosine_loss
                 attn_loss = torch.empty(0, device=args.device)
                 if args.condition_self:
+                    # Target for self attention on shape_A
+                    attn_AA = get_target_attn(
+                        shape_A[:, gt_A, :],
+                        post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A],
+                        geod_dist=geod_dist if args.geod_dist else None,
+                        permidx=permidx_A,
+                        sigmas=torch.tensor(args.sigma[:args.condition_self]).to(args.device) if args.condition_fixed else None
+                    )
+                    # Target for self attention on shape_B
+                    attn_BB = get_target_attn(
+                        shape_B[:, gt_B, :],
+                        post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:],
+                        geod_dist=geod_dist if args.geod_dist else None,
+                        permidx=permidx_B,
+                        sigmas=torch.tensor(args.sigma[:args.condition_self]).to(args.device) if args.condition_fixed else None
+                    )
+
                     attn_loss = torch.cat((
                         attn_loss,
-                        (post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A] - attn_AA.softmax(dim=-1)).abs().sum().reshape(1),
-                        (post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:] - attn_BB.softmax(dim=-1)).abs().sum().reshape(1)
+                        loss_function(post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A], attn_AA),
+                        loss_function(post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:], attn_BB)
                     ))
                 if args.condition_cross:
+                    # Target for cross attention from shape_B to shape_A
+                    attn_AB = get_target_attn(
+                        shape_A[:, gt_A, :],
+                        post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A],
+                        geod_dist=geod_dist if args.geod_dist else None,
+                        permidx=permidx_B,
+                        sigmas=torch.tensor(args.sigma[args.condition_self:args.condition_self + args.condition_cross]).to(args.device) if args.condition_fixed else None
+                    )
+                    # Target for cross attention from shape_A to shape_B
+                    attn_BA = get_target_attn(
+                        shape_B[:, gt_B, :],
+                        post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:],
+                        geod_dist=geod_dist if args.geod_dist else None,
+                        permidx=permidx_A,
+                        sigmas=torch.tensor(args.sigma[args.condition_self:args.condition_self + args.condition_cross]).to(args.device) if args.condition_fixed else None
+                    )
+                    # Match order of the tokens
+                    attn_AB = attn_AB[:, :, :, gt_B][:, :, :, permidx_A]
+                    attn_BA = attn_BA[:, :, :, gt_A][:, :, :, permidx_B]
+
                     attn_loss = torch.cat((
                         attn_loss,
-                        (post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A] - attn_AB.softmax(dim=-1)).abs().sum().reshape(1),
-                        (post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:] - attn_BA.softmax(dim=-1)).abs().sum().reshape(1)
+                        loss_function(post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], attn_AB),
+                        loss_function(post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], attn_BA)
                     ))
                 attn_loss = attn_loss.nanmean()
-
-            elif args.condition_loss == "cos":
-                attn_loss = torch.empty(0, device=args.device)
-                if args.condition_self:
-                    attn_loss = torch.cat((
-                        attn_loss,
-                        (post_softmax_attn.shape[0] * args.condition_self * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, -args.condition_self:, :dim_A, :dim_A], attn_AA.softmax(dim=-1), dim = 2).sum().reshape(1),
-                        (post_softmax_attn.shape[0] * args.condition_self * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, -args.condition_self:, dim_B:, dim_B:], attn_BB.softmax(dim=-1), dim = 2).sum().reshape(1),
-                    ))
-                if args.condition_cross:
-                    attn_loss = torch.cat((
-                        attn_loss,
-                        (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, dim_B:, :dim_A], attn_AB.softmax(dim=-1), dim = 2).sum().reshape(1),
-                        (post_softmax_attn.shape[0] * args.condition_cross * post_softmax_attn.shape[2]) - nn.functional.cosine_similarity(post_softmax_attn[:, :args.condition_cross, :dim_A, dim_B:], attn_BA.softmax(dim=-1), dim = 2).sum().reshape(1),
-                    ))
-                attn_loss = attn_loss.mean()
 
             elif args.condition_loss == "sort":
                 attn_loss = 0
@@ -362,6 +349,12 @@ def test(model, dataloader, args):
 
 def cross_heads_loss(attn:torch.Tensor):
     return (-(attn - attn.roll(1, 1)).abs()).exp().mean(dim=2).sum()
+
+def cosine_loss(attn:torch.Tensor, target:torch.Tensor):
+    return (attn.shape[0] * attn.shape[1] * attn.shape[2]) - nn.functional.cosine_similarity(attn, target.softmax(dim=-1), dim = 2).sum().reshape(1)
+
+def diff_loss(attn:torch.Tensor, target:torch.Tensor):
+    return (attn - target.softmax(dim=-1)).abs().sum().reshape(1)
 
 def get_target_attn(shape, post_softmax_attn, geod_dist=None, permidx=None, sigmas=None):
     if sigmas is None:
