@@ -66,11 +66,12 @@ def main(args):
     # DATASET
     data_train = SMPLDataset(args.path_data, train=True, transform=transform_train)
     data_test = SMPLDataset(args.path_data, train=False, transform=transform_test)
+    if args.validation_couples:
+        data_test, _ = torch.utils.data.random_split(data_test, [args.validation_couples * 2, len(data_test) - args.validation_couples * 2])
 
     # DATALOADERS
     dataloader_train = DataLoader(data_train, batch_size=args.batch_size, shuffle=True, drop_last=True)
     dataloader_test = DataLoader(data_test, batch_size=args.batch_size, shuffle=False, drop_last=True)
-    num_points = 1000
 
     # INITIALIZE MODEL
     model = EncoderPointTransfomer(
@@ -119,7 +120,7 @@ def main(args):
     for epoch in range(args.n_epoch):
         logger.info(f"starting epoch {epoch}/{args.n_epoch-1}")
         start = time.time()
-        epoch_loss = train(model, dataloader_train, optimizer, num_points, args)
+        epoch_loss = train(model, dataloader_train, optimizer, args)
         print(f"EPOCH: {epoch} HAS FINISHED, in {time.time() - start} SECONDS! ---------------------------------------")
         print(f"LOSS: {epoch_loss} --------------------------------------------------------------------------------------")
         os.makedirs(args.path_model, exist_ok=True)
@@ -165,7 +166,7 @@ def main(args):
 # END TRAINING -----------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------------------------------------------
 
-def train(model, dataloader, optimizer, num_points, args):
+def train(model, dataloader, optimizer, args):
 
     epoch_loss = 0
     geod_dist = None
@@ -180,13 +181,13 @@ def train(model, dataloader, optimizer, num_points, args):
         shape_A = shapes[:args.batch_size // 2, :, :]
         shape_B = shapes[args.batch_size // 2:, :, :]
 
-        dim_A = num_points
+        dim_A = shape_A.shape[1]
         permidx_A = torch.randperm(dim_A)
         shape_A = shape_A[:, permidx_A, :]
         gt_A = torch.zeros_like(permidx_A)
         gt_A[permidx_A] = torch.arange(dim_A)
 
-        dim_B = num_points
+        dim_B = shape_B.shape[1]
         permidx_B = torch.randperm(dim_B)
         shape_B = shape_B[:, permidx_B, :]
         gt_B = torch.zeros_like(permidx_B)
@@ -311,8 +312,8 @@ def train(model, dataloader, optimizer, num_points, args):
 def test(model, dataloader, args):
     err = []
     for item in tqdm(dataloader):
-        shapes = item[0].to(args.device)
-        faces = item[1]
+        shapes = item["x"].to(args.device)
+        faces = item["faces"]
         shape_A = shapes[:shapes.shape[0] // 2, :, :]
         shape_B = shapes[shapes.shape[0] // 2:, :, :]
 
@@ -425,7 +426,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--use_validation", default=False, action="store_true", help="use a validation set to evaluate the model")
     parser.add_argument("--validation_step", type=int, default=5, help="number of epochs between validation evaluations")
-
+    parser.add_argument("--validation_couples", type=int, default=0, help="number of couples to use for validation")
 
     args, _ = parser.parse_known_args()
 
@@ -467,5 +468,8 @@ if __name__ == "__main__":
             if torch.backends.mps.is_available()
             else "cpu"
         )
+
+    if args.validation_couples == 0:
+        args.validation_couples = False
 
     main(args)
